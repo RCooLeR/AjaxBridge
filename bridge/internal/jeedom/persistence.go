@@ -236,7 +236,7 @@ func reconcilePersistedMappings(device *Device) {
 	for metric := range oldMetrics {
 		deleteUnreferencedMetric(device, metric)
 	}
-	preservePersistedState := hadPersistedState && hasActionOnlyToggleControl(device) && !hasObservedStateCommand(device)
+	preservePersistedState := hadPersistedState && hasActionOnlyToggleControl(device) && !hasObservedAuthoritativeToggleFeedback(device)
 	rebuildAllMetricValues(device)
 	if preservePersistedState {
 		device.Values["state"] = persistedState

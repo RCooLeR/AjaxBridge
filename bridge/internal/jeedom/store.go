@@ -340,7 +340,7 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 			continue
 		}
 		state, exists := current.Values["state"]
-		if exists && hasActionOnlyToggleControl(current) && !hasObservedStateCommand(current) {
+		if exists && hasActionOnlyToggleControl(current) && !hasObservedAuthoritativeToggleFeedback(current) {
 			optimisticStates[slug] = state
 			for _, action := range current.Actions {
 				switch NormalizeControlAction(action.Action) {
@@ -657,7 +657,7 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 	affectedSlugs[primary.DeviceSlug] = struct{}{}
 	for slug := range affectedSlugs {
 		current := s.devices[slug]
-		if current == nil || !hasActionOnlyToggleControl(current) || hasObservedStateCommand(current) {
+		if current == nil || !hasActionOnlyToggleControl(current) || hasObservedAuthoritativeToggleFeedback(current) {
 			continue
 		}
 		state, restore := optimisticStates[slug]
@@ -1949,7 +1949,7 @@ func rebuildAllMetricValuesPreservingOptimisticState(device *Device) {
 		return
 	}
 	optimisticState, hadOptimisticState := device.Values["state"]
-	preserveOptimisticState := hadOptimisticState && hasActionOnlyToggleControl(device) && !hasObservedStateCommand(device)
+	preserveOptimisticState := hadOptimisticState && hasActionOnlyToggleControl(device) && !hasObservedAuthoritativeToggleFeedback(device)
 	rebuildAllMetricValues(device)
 	if preserveOptimisticState {
 		device.Values["state"] = optimisticState
@@ -1978,6 +1978,21 @@ func hasObservedStateCommand(device *Device) bool {
 	}
 	for _, command := range device.RawCommands {
 		if command.Metric == "state" && effectiveCommandState(command).present {
+			return true
+		}
+	}
+	return false
+}
+
+func hasObservedAuthoritativeToggleFeedback(device *Device) bool {
+	if hasObservedStateCommand(device) {
+		return true
+	}
+	if device == nil || !isWaterStopDevice(*device) {
+		return false
+	}
+	for _, command := range device.RawCommands {
+		if command.Metric == "valve_position" && effectiveCommandState(command).present {
 			return true
 		}
 	}
@@ -2028,6 +2043,13 @@ func rebuildDerivedValuesForMetricChange(device *Device, metric string) {
 		if !left.LastUpdate.Equal(right.LastUpdate) {
 			return left.LastUpdate.Before(right.LastUpdate)
 		}
+		if rebuildState {
+			leftPriority := derivedStateSourcePriority(storedCommandMapping(left), *device)
+			rightPriority := derivedStateSourcePriority(storedCommandMapping(right), *device)
+			if leftPriority != rightPriority {
+				return leftPriority < rightPriority
+			}
+		}
 		if leftState.empty != rightState.empty {
 			return !leftState.empty
 		}
@@ -2042,19 +2064,7 @@ func rebuildDerivedValuesForMetricChange(device *Device, metric string) {
 	gridPowerFound := false
 	gridPowerAt := time.Time{}
 	for _, command := range commands {
-		event := Event{
-			CommandID:   command.CommandID,
-			LogicalID:   command.LogicalID,
-			GenericType: command.GenericType,
-			ObjectName:  command.ObjectName,
-			DeviceName:  command.Device,
-			CommandName: firstNonEmpty(command.RawName, command.Name),
-			Name:        firstNonEmpty(command.RawName, command.Name),
-			Type:        command.Type,
-			Subtype:     command.Subtype,
-			Unit:        command.Unit,
-		}
-		mapping := mappingFromCommandContract(command, MappingFor(event))
+		mapping := storedCommandMapping(command)
 		if rebuildState {
 			if mapping.Metric == "state" && (command.Value != nil || command.EmptyValue) {
 				state = command.Value
@@ -2110,6 +2120,46 @@ func rebuildDerivedValuesForMetricChange(device *Device, metric string) {
 			delete(device.Values, "grid_power")
 		}
 	}
+}
+
+func storedCommandMapping(command Command) Mapping {
+	event := Event{
+		CommandID:   command.CommandID,
+		LogicalID:   command.LogicalID,
+		GenericType: command.GenericType,
+		ObjectName:  command.ObjectName,
+		DeviceName:  command.Device,
+		CommandName: firstNonEmpty(command.RawName, command.Name),
+		Name:        firstNonEmpty(command.RawName, command.Name),
+		Type:        command.Type,
+		Subtype:     command.Subtype,
+		Unit:        command.Unit,
+	}
+	return mappingFromCommandContract(command, MappingFor(event))
+}
+
+// derivedStateSourcePriority resolves equal-observation-time discovery seeds.
+// Process weaker inference first so physical state/position feedback wins the
+// final value. Observation time still takes precedence when feedback arrives
+// later in normal operation.
+func derivedStateSourcePriority(mapping Mapping, device Device) int {
+	switch mapping.Metric {
+	case "state":
+		return 4
+	case "valve_position":
+		if isWaterStopDevice(device) {
+			return 3
+		}
+	case "event_code":
+		if isWallSwitchDevice(device) || isWaterStopDevice(device) {
+			return 2
+		}
+	case "current_a", "power_w":
+		if isWallSwitchDevice(device) {
+			return 1
+		}
+	}
+	return 0
 }
 
 func queueCommandCleanups(device *Device, commands []Command) {
@@ -2775,7 +2825,7 @@ func (s *Store) RecordOptimisticControlState(action Action, at time.Time) (Devic
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	device := s.devices[Slug(action.DeviceSlug)]
-	if device == nil || !toggleCapableDevice(*device) {
+	if device == nil || !toggleCapableDevice(*device) || hasObservedAuthoritativeToggleFeedback(device) {
 		return Device{}, false
 	}
 	if device.Values == nil {

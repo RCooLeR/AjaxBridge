@@ -672,6 +672,144 @@ func TestStoreDoesNotDeriveWaterStopStateFromCommonEvent(t *testing.T) {
 	}
 }
 
+func TestStoreEqualTimeStateFeedbackBeatsWallSwitchInference(t *testing.T) {
+	at := time.Unix(1_700_008_000, 0).UTC()
+	device := &Device{
+		Device:           "Fence light",
+		DeviceSlug:       "fence_light",
+		JeedomDeviceType: "WallSwitch",
+		Values:           make(map[string]any),
+		RawCommands: map[string]Command{
+			"178": {CommandID: "178", Metric: "event_code", Component: ComponentSensor, Value: "M_1F_37", LastUpdate: at, LastValueAt: at},
+			"180": {CommandID: "180", Metric: "power_w", Component: ComponentSensor, Value: float64(12), LastUpdate: at, LastValueAt: at},
+			"420": {CommandID: "420", Metric: "state", Component: ComponentBinarySensor, Value: false, LastUpdate: at, LastValueAt: at},
+		},
+	}
+
+	rebuildAllMetricValues(device)
+	if state, exists := device.Values["state"]; !exists || state != false {
+		t.Fatalf("equal-time WallSwitch state = %#v present=%v, want raw feedback false", state, exists)
+	}
+}
+
+func TestStoreEqualTimeValvePositionBeatsWaterStopEvent(t *testing.T) {
+	at := time.Unix(1_700_008_100, 0).UTC()
+	device := &Device{
+		Device:           "Water valve",
+		DeviceSlug:       "water_valve",
+		JeedomDeviceType: "WaterStop",
+		Values:           make(map[string]any),
+		RawCommands: map[string]Command{
+			"310": {CommandID: "310", Metric: "event_code", Component: ComponentSensor, Value: "M_48_37", LastUpdate: at, LastValueAt: at},
+			"414": {CommandID: "414", Metric: "valve_position", Component: ComponentSensor, Value: "INTERMEDIATE", LastUpdate: at, LastValueAt: at},
+		},
+	}
+
+	rebuildAllMetricValues(device)
+	if state, exists := device.Values["state"]; !exists || state != nil {
+		t.Fatalf("equal-time WaterStop state = %#v present=%v, want intermediate/unknown", state, exists)
+	}
+}
+
+func TestStoreNewerWallSwitchInferenceBeatsOlderRawState(t *testing.T) {
+	feedbackAt := time.Unix(1_700_008_150, 0).UTC()
+	eventAt := feedbackAt.Add(time.Second)
+	device := &Device{
+		Device:           "Fence light",
+		DeviceSlug:       "fence_light",
+		JeedomDeviceType: "WallSwitch",
+		Values:           make(map[string]any),
+		RawCommands: map[string]Command{
+			"178": {CommandID: "178", Metric: "event_code", Component: ComponentSensor, Value: "M_1F_37", LastUpdate: eventAt, LastValueAt: eventAt},
+			"420": {CommandID: "420", Metric: "state", Component: ComponentBinarySensor, Value: false, LastUpdate: feedbackAt, LastValueAt: feedbackAt},
+		},
+	}
+
+	rebuildAllMetricValues(device)
+	if state, exists := device.Values["state"]; !exists || state != true {
+		t.Fatalf("newer WallSwitch event state = %#v present=%v, want true", state, exists)
+	}
+}
+
+func TestStoreDoesNotOptimisticallyOverrideObservedToggleFeedback(t *testing.T) {
+	at := time.Unix(1_700_008_200, 0).UTC()
+	tests := []struct {
+		name   string
+		device Device
+	}{
+		{
+			name: "WallSwitch raw state",
+			device: Device{
+				Device:           "Fence light",
+				DeviceSlug:       "fence_light",
+				JeedomDeviceType: "WallSwitch",
+				Values:           map[string]any{"state": false},
+				RawCommands: map[string]Command{
+					"420": {CommandID: "420", Metric: "state", Value: false, LastUpdate: at, LastValueAt: at},
+				},
+				Actions: map[string]Action{"on": {Action: "on", CommandID: "182", DeviceSlug: "fence_light"}},
+			},
+		},
+		{
+			name: "WaterStop valve position",
+			device: Device{
+				Device:           "Water valve",
+				DeviceSlug:       "water_valve",
+				JeedomDeviceType: "WaterStop",
+				Values:           map[string]any{"state": false, "valve_position": "CLOSED"},
+				RawCommands: map[string]Command{
+					"414": {CommandID: "414", Metric: "valve_position", Value: "CLOSED", LastUpdate: at, LastValueAt: at},
+				},
+				Actions: map[string]Action{"on": {Action: "on", CommandID: "312", DeviceSlug: "water_valve"}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewStore("keep_last")
+			device := tt.device
+			store.devices[device.DeviceSlug] = &device
+			if snapshot, updated := store.RecordOptimisticControlState(device.Actions["on"], at.Add(time.Second)); updated {
+				t.Fatalf("optimistic update = %#v, want authoritative feedback to remain unchanged", snapshot)
+			}
+			stored, ok := store.Device(device.DeviceSlug)
+			if !ok || stored.Values["state"] != false {
+				t.Fatalf("stored device = %#v, want state=false from feedback", stored)
+			}
+		})
+	}
+}
+
+func TestReconcilePersistedWaterStopUsesObservedPositionOverOptimisticState(t *testing.T) {
+	at := time.Unix(1_700_008_300, 0).UTC()
+	device := &Device{
+		Device:           "Water valve",
+		DeviceSlug:       "water_valve",
+		JeedomDeviceType: "WaterStop",
+		Values:           map[string]any{"state": true, "valve_position": "CLOSED"},
+		RawCommands: map[string]Command{
+			"414": {
+				CommandID:   "414",
+				Metric:      "valve_position",
+				Component:   ComponentSensor,
+				Value:       "CLOSED",
+				LastUpdate:  at,
+				LastValueAt: at,
+			},
+		},
+		Actions: map[string]Action{
+			"on":  {Action: "on", CommandID: "312", DeviceSlug: "water_valve"},
+			"off": {Action: "off", CommandID: "313", DeviceSlug: "water_valve"},
+		},
+	}
+
+	reconcilePersistedMappings(device)
+	if state, exists := device.Values["state"]; !exists || state != false {
+		t.Fatalf("reconciled WaterStop state = %#v present=%v, want CLOSED feedback false", state, exists)
+	}
+}
+
 func TestStoreDerivesTransmitterGridPowerFromEventCode(t *testing.T) {
 	catalog := testCatalog(t, devicecatalog.Device{
 		Account:          "A0F80D",
