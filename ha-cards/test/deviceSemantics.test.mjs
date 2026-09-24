@@ -6,7 +6,9 @@ import {
   controlStateLabel,
   deviceControlAccessibility,
   inferAjaxButtonDeviceType,
+  isAuthoritativeRelayStateEntity,
   isPhysicalAjaxButtonType,
+  resolveRelayState,
   resolveDeviceControlState,
   selectSidebarMetrics,
 } from '../src/utils/deviceSemantics.ts';
@@ -93,5 +95,49 @@ test('uses switch semantics only for known binary states', () => {
   assert.deepEqual(
     deviceControlAccessibility({ actionLabel: 'Open', deviceName: 'Water valve', state: 'closing', stateLabel: 'Closing' }),
     { label: 'Water valve: Closing. Action: Open' },
+  );
+});
+
+test('recognizes only authoritative Relay binary state entities and preserves unknown', () => {
+  const relayStateEntity = {
+    deviceType: 'relay',
+    entityId: 'binary_sensor.rele_vorit_state_2',
+    originalName: 'State',
+  };
+  assert.equal(isAuthoritativeRelayStateEntity(relayStateEntity), true);
+  assert.equal(resolveRelayState('on'), 'on');
+  assert.equal(resolveRelayState('off'), 'off');
+  assert.equal(resolveRelayState('unknown'), 'unknown');
+  assert.equal(resolveRelayState('unavailable'), 'unknown');
+
+  assert.equal(isAuthoritativeRelayStateEntity({ ...relayStateEntity, deviceType: 'wall_switch' }), false);
+  assert.equal(
+    isAuthoritativeRelayStateEntity({
+      deviceType: 'relay',
+      entityId: 'binary_sensor.rele_vorit_battery_state_2',
+      originalName: 'Battery state',
+    }),
+    false,
+  );
+  assert.equal(
+    isAuthoritativeRelayStateEntity({
+      deviceType: 'relay',
+      entityId: 'sensor.rele_vorit_state_2',
+      originalName: 'State',
+    }),
+    false,
+  );
+});
+
+test('shows only the authoritative Relay State metric in the active sidebar selection', () => {
+  const metrics = [
+    { id: 'metric:relay_state:binary_sensor.rele_vorit_state_2', label: 'State' },
+    { id: 'metric:sensor.unrelated_state', label: 'State' },
+    { id: 'metric:power', label: 'Power' },
+  ];
+
+  assert.deepEqual(
+    selectSidebarMetrics(metrics).map((metric) => metric.id),
+    ['metric:relay_state:binary_sensor.rele_vorit_state_2', 'metric:power'],
   );
 });

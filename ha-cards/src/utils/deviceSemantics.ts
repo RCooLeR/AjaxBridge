@@ -39,17 +39,43 @@ export function isPhysicalAjaxButtonType(deviceType: string): boolean {
   return deviceType === 'panic_button';
 }
 
-export function selectSidebarMetrics<T extends { label: string }>(metrics: T[]): T[] {
+export function selectSidebarMetrics<T extends { id: string; label: string }>(metrics: T[]): T[] {
   const selectedLabels = new Set<string>();
 
   return metrics.filter((metric) => {
     const label = metric.label.trim().toLowerCase();
-    if (!SIDEBAR_METRIC_LABELS.has(label) || selectedLabels.has(label)) {
+    const isAuthoritativeRelayState = label === 'state' && metric.id.startsWith('metric:relay_state:');
+    if ((!SIDEBAR_METRIC_LABELS.has(label) && !isAuthoritativeRelayState) || selectedLabels.has(label)) {
       return false;
     }
     selectedLabels.add(label);
     return true;
   });
+}
+
+export function isAuthoritativeRelayStateEntity(input: {
+  deviceType: string;
+  entityId: string;
+  name?: string | null;
+  originalName?: string | null;
+  friendlyName?: unknown;
+}): boolean {
+  if (compactModel(input.deviceType) !== 'relay' || !input.entityId.toLowerCase().startsWith('binary_sensor.')) {
+    return false;
+  }
+
+  const entityLeaf = input.entityId.split('.', 2)[1]?.toLowerCase() ?? '';
+  if (!/(^|_)state(?:_\d+)?$/.test(entityLeaf)) {
+    return false;
+  }
+
+  return [input.name, input.originalName, input.friendlyName]
+    .some((label) => typeof label === 'string' && label.trim().toLowerCase() === 'state');
+}
+
+export function resolveRelayState(rawState?: string): DeviceControlState {
+  const state = controlStateFromValue(rawState);
+  return state === 'on' || state === 'off' ? state : 'unknown';
 }
 
 export function deviceControlAccessibility(input: {

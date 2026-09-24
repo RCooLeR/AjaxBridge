@@ -24,8 +24,10 @@ import {
   classifyAjaxDiagnosticMetric,
   controlStateLabel,
   inferAjaxButtonDeviceType,
+  isAuthoritativeRelayStateEntity,
   isPhysicalAjaxButtonType,
   resolveDeviceControlState,
+  resolveRelayState,
 } from '../utils/deviceSemantics';
 
 interface HomeAssistantArea {
@@ -151,6 +153,7 @@ interface AjaxDeviceMetricContext {
 
 interface DeviceMetricOptions {
   calculatePowerFromVoltageCurrent?: boolean;
+  deviceType?: string;
 }
 
 interface DeviceActionContext {
@@ -482,7 +485,7 @@ function buildAjaxDevices(
         troubleActive,
         activeSignals,
       },
-      { calculatePowerFromVoltageCurrent: type === 'wall_switch' },
+      { calculatePowerFromVoltageCurrent: type === 'wall_switch', deviceType: type },
     );
 
     output.push({
@@ -1829,6 +1832,11 @@ function buildDeviceMetrics(
   }
 
   for (const entry of entries) {
+    const relayState = relayStateMetricCandidate(entry, states[entry.entity_id], options.deviceType);
+    if (relayState) {
+      candidates.push(relayState);
+      continue;
+    }
     const candidate = metricCandidateFromEntity(entry, states[entry.entity_id]);
     if (candidate) {
       candidates.push(candidate);
@@ -1851,6 +1859,33 @@ function buildDeviceMetrics(
     .map(({ kind: _kind, priority: _priority, ...metric }) => metric);
 
   return metrics.length > 0 ? metrics : undefined;
+}
+
+function relayStateMetricCandidate(
+  entry: HomeAssistantEntityEntry,
+  state: HomeAssistantState | undefined,
+  deviceType?: string,
+): MetricCandidate | null {
+  if (!isAuthoritativeRelayStateEntity({
+    deviceType: deviceType ?? '',
+    entityId: entry.entity_id,
+    name: entry.name,
+    originalName: entry.original_name,
+    friendlyName: state?.attributes.friendly_name,
+  })) {
+    return null;
+  }
+
+  const controlState = resolveRelayState(state?.state);
+  return {
+    id: `metric:relay_state:${entry.entity_id}`,
+    kind: 'relay_state',
+    label: 'State',
+    value: controlStateLabel(controlState),
+    icon: { category: 'devices', key: 'relay' },
+    tone: controlState === 'on' ? 'green' : controlState === 'off' ? 'slate' : 'amber',
+    priority: 18,
+  };
 }
 
 function calculatedPowerMetric(
