@@ -1,0 +1,81 @@
+{
+  "_ajaxbridge_patch_notice": "Modified 2026-09-24 by AjaxBridge contributors: expanded device telemetry and state parsing. See ajaxbridge-patch/NOTICE.md and license texts; original Jeedom notices remain applicable.",
+  "name" : "WallSwitch",
+  "commands" : [
+    {
+      "name": "Source evenement",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "sourceObjectName"
+    },
+    {
+      "name": "Evenement",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "event"
+    },
+    {
+      "name": "Code evenement",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "eventCode"
+    },
+    {
+      "name": "Etat",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 1,
+      "isHistorized": 1,
+      "logicalId": "realState"
+    },
+    {
+      "name": "Voltage",
+      "type": "info",
+      "subtype": "numeric",
+      "isVisible": 1,
+      "isHistorized": 1,
+      "generic_type": "VOLTAGE",
+      "logicalId": "voltage"
+    },
+    {
+      "name": "Puissance",
+      "type": "info",
+      "subtype": "numeric",
+      "generic_type": "POWER",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "powerWtH"
+    },
+    {
+      "name": "Courant",
+      "type": "info",
+      "subtype": "numeric",
+      "generic_type": "CURRENT",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "currentMA"
+    },
+    {
+      "name": "On",
+      "type": "action",
+      "subtype": "other",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "SWITCH_ON"
+    },
+    {
+      "name": "Off",
+      "type": "action",
+      "subtype": "other",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "SWITCH_OFF"
+    }
+  ]
+}

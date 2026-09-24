@@ -15,6 +15,7 @@
 ## Jeedom
 
 - [Jeedom integration](./jeedom.md): what Jeedom adds, how to install Jeedom and required plugins, MQTT Manager setup, bridge setup, sample capture, translation, duplicate prevention, and controls.
+- [Jeedom plugin patch (Українською)](../../Jeedom/README.md): copy/replace files, required official plugin purchase, licensing, supported metrics, compatibility checks, backup, installation and rollback.
 
 ## Prometheus
 

@@ -1,0 +1,138 @@
+{
+  "_ajaxbridge_patch_notice": "Modified 2026-09-24 by AjaxBridge contributors: expanded device telemetry and state parsing. See ajaxbridge-patch/NOTICE.md and license texts; original Jeedom notices remain applicable.",
+  "name": "ReX 2",
+  "commands": [
+    {
+      "name": "Etat",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "state"
+    },
+    {
+      "name": "Source evenement",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "sourceObjectName"
+    },
+    {
+      "name": "Evenement",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "event"
+    },
+    {
+      "name": "Code evenement",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "eventCode"
+    },
+    {
+      "name": "Batterie",
+      "type": "info",
+      "subtype": "numeric",
+      "isVisible": 1,
+      "isHistorized": 1,
+      "logicalId": "batteryChargeLevelPercentage",
+      "generic_type": "BATTERY",
+      "unite": "%"
+    },
+    {
+      "name": "En ligne",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "online"
+    },
+    {
+      "name": "Signal",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "signalLevel"
+    },
+    {
+      "name": "Autoprotection",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "tampered"
+    },
+    {
+      "name": "Nombre de problèmes",
+      "type": "info",
+      "subtype": "numeric",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "issuesCount"
+    },
+    {
+      "name": "Alimentation externe",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "externallyPowered"
+    },
+    {
+      "name": "Température",
+      "type": "info",
+      "subtype": "numeric",
+      "isVisible": 1,
+      "isHistorized": 1,
+      "logicalId": "temperature",
+      "generic_type": "TEMPERATURE",
+      "unite": "°C"
+    },
+    {
+      "name": "Connexion radio",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "radioConnectionOk"
+    },
+    {
+      "name": "Canal photo connecté",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "dataChannelOk"
+    },
+    {
+      "name": "Signal canal photo",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "dataChannelSignalQuality"
+    },
+    {
+      "name": "Ethernet activé",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "networkDetails::ethernet::enabled"
+    },
+    {
+      "name": "Ethernet connecté",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "networkDetails::ethernet::connectionOk"
+    }
+  ]
+}

@@ -13,6 +13,7 @@ AjaxBridge is an unofficial DIY open-source project for compatibility and integr
 ## Documentation
 
 - [Bridge documentation](./bridge/docs/index.md)
+- [Jeedom Ajax Systems patch: files, installation and licensing (Українською)](./Jeedom/README.md)
 - [Notifications](./bridge/docs/notifications.md)
 - [Admin panel](./bridge/docs/admin.md)
 - [Bridge package](./bridge/README.md)
@@ -20,4 +21,4 @@ AjaxBridge is an unofficial DIY open-source project for compatibility and integr
 
 ## License
 
-MIT License. See [LICENSE](./LICENSE). See [NOTICE](./NOTICE) for trademark and affiliation notice.
+AjaxBridge code is MIT licensed; see [LICENSE](./LICENSE) and [NOTICE](./NOTICE). The third-party Jeedom plugin files in [`Jeedom/files/`](./Jeedom/files/) retain their upstream copyleft terms and are not relicensed under MIT; see [Jeedom licensing](./Jeedom/LICENSING.md). Purchase and install the official Ajax Systems plugin from Jeedom Market before following the patch installation procedure.

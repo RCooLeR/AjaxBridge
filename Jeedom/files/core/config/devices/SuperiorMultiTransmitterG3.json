@@ -1,0 +1,160 @@
+{
+  "_ajaxbridge_patch_notice": "Modified 2026-09-24 by AjaxBridge contributors: expanded device telemetry and state parsing. See ajaxbridge-patch/NOTICE.md and license texts; original Jeedom notices remain applicable.",
+  "name": "Superior MultiTransmitter G3",
+  "commands": [
+    {
+      "name": "Etat",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "state"
+    },
+    {
+      "name": "Source evenement",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "sourceObjectName"
+    },
+    {
+      "name": "Evenement",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "event"
+    },
+    {
+      "name": "Code evenement",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "eventCode"
+    },
+    {
+      "name": "Batterie",
+      "type": "info",
+      "subtype": "numeric",
+      "isVisible": 1,
+      "isHistorized": 1,
+      "logicalId": "batteryChargeLevelPercentage",
+      "generic_type": "BATTERY",
+      "unite": "%"
+    },
+    {
+      "name": "En ligne",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "online"
+    },
+    {
+      "name": "Signal",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "signalLevel"
+    },
+    {
+      "name": "Autoprotection",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "tampered"
+    },
+    {
+      "name": "Nombre de problèmes",
+      "type": "info",
+      "subtype": "numeric",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "issuesCount"
+    },
+    {
+      "name": "Alimentation externe",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "externallyPowered"
+    },
+    {
+      "name": "Batterie en charge",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "charging"
+    },
+    {
+      "name": "Défaut batterie",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "batteryMalfunction"
+    },
+    {
+      "name": "Défaut alimentation détecteurs",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "externalDevicePowerFailure"
+    },
+    {
+      "name": "Défaut alimentation incendie",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "externalFireAlarmPowerFailure"
+    },
+    {
+      "name": "Canal de données",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "dataChannelOk"
+    },
+    {
+      "name": "Signal canal de données",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "dataChannelSignalQuality"
+    },
+    {
+      "name": "Etat alimentation détecteurs",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "sensorsState"
+    },
+    {
+      "name": "Etat alimentation incendie",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "fireNotifiersState"
+    },
+    {
+      "name": "Défauts batterie et chargeur",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "logicalId": "malfunctionStates"
+    }
+  ]
+}

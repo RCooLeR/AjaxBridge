@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Package the optional Jeedom Ajax Systems telemetry patch in `Jeedom/`, with copy/replace source files, Ukrainian installation and rollback instructions, required official plugin purchase guidance, upstream licensing notices, checksums and offline validation.
 - Normalize the expanded Ajax Jeedom plugin contract for Button, SpaceControl, WaterStop, ReX, MultiTransmitter, LifeQuality, and FireProtect families, including diagnostic metadata, CO₂, timestamp conversion, valve position, and separate smoke/heat/CO alarms.
 - Prefer stable Jeedom logical/generic metadata and existing command-ID contracts over localized labels, migrate cached mappings on restart, and reconcile removed commands per owning eqLogic with persistent Home Assistant discovery cleanup retries.
 - Expand the admin matching view with canonical command details, linked/unlinked summaries, one-click numeric command-ID merging, and notification metrics discovered from the live Jeedom model.

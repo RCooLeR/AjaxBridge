@@ -1,0 +1,314 @@
+{
+  "bundle": "2026.09.24.1",
+  "date": "2026-09-24",
+  "plugin_id": "ajaxSystem",
+  "jeedom_minimum_from_upstream_metadata": "4.4",
+  "baseline_commit": "0ee0a700a0f1d5fa578e0e51a762a15e98daeb69",
+  "source_commit": "af5a742706f7185a4b018e94671d1b7ed8b0e731",
+  "baseline_description": "Local snapshot; latest original changelog entry 2026-01-12. Not an official release identifier. Transmitter temperature already present.",
+  "runtime_file_count": 43,
+  "hash_notes": "Source and baseline hashes normalize CRLF to LF; packaged hashes are exact bytes. Files include modification notices and LF endings.",
+  "files": [
+    {
+      "path": "core/class/ajaxSystem.class.php",
+      "kind": "modified",
+      "source_sha256_lf": "f40ad344b0cd081a3bfb1086ef7eeb6ff8be5a4bfb525928d999995f0f8ce33e",
+      "baseline_sha256_lf": "01a49fc99800c6773afbadd0daeee7c84e8fb3b91d9a986d84549fde11d0652c",
+      "packaged_sha256": "2d4d2305f33b42411c7f0a4d9adca49d4e5db326487d676a16242f613a3c9ad9"
+    },
+    {
+      "path": "core/config/devices/Button.json",
+      "kind": "added",
+      "source_sha256_lf": "b75b2cec48d5d08bef30199c97480842a1bccad61116a663332cb4b666d231b3",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "40ca9177eca604fc73dfaa947d0efc3d2cfd1af25faade5ea472f758265cc32d"
+    },
+    {
+      "path": "core/config/devices/ButtonS.json",
+      "kind": "added",
+      "source_sha256_lf": "e5057a4e9ab05ddb909194be5167e6766fc6915dc3968896baa905176a671255",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "2534b779454d1a67898808f6f6ac405b1a1d284110f84a9ba6a9ca0d4b1f95fe"
+    },
+    {
+      "path": "core/config/devices/DoubleButton.json",
+      "kind": "added",
+      "source_sha256_lf": "c3b9a3100847bd0b4fb962dd60c6ca6885a59cbe5680e39e36ae63bf2d41e271",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "1bd2da823518e54161503490d4df4b1a084ffe3609b09a2deffc9738373308bb"
+    },
+    {
+      "path": "core/config/devices/FireProtect.json",
+      "kind": "modified",
+      "source_sha256_lf": "7e4ce6a5b856e2fd1a51cf25220fe357ecfbfa38d0cc0a4a4c19804235eaccad",
+      "baseline_sha256_lf": "b6ac17976636c6d15b9016f3c388c906421133ecc5e16a5eb9aa981d2f222899",
+      "packaged_sha256": "113149a32b3e5a25883f5f930c5ef027735e6566a1e9860046e220eaaf03a414"
+    },
+    {
+      "path": "core/config/devices/FireProtect2.json",
+      "kind": "modified",
+      "source_sha256_lf": "67417948332c8de243f1335494b5e3012c5f0aaa528f6a35ef5065e36299de66",
+      "baseline_sha256_lf": "3857d524a207e9f34a3892b5d70d803692ef659934b9bb8618e4c8633e645475",
+      "packaged_sha256": "454a3d50715a8b8dad7d288f473f58fa331a0e9cc7aa16dc538bf64e3f7edb16"
+    },
+    {
+      "path": "core/config/devices/FireProtect2CAc.json",
+      "kind": "added",
+      "source_sha256_lf": "bca786e371b8de9db7d4544c234bf249dd3999e6780d639e490580fdd1aaea33",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "d1f6a1d170d47ad54b844b313ffb732b284d01522ec0988e1dfca96956cb1a76"
+    },
+    {
+      "path": "core/config/devices/FireProtect2CRbUl.json",
+      "kind": "added",
+      "source_sha256_lf": "8f9b0cfa648450d7719cbd6af238098c6821bb19ae0efb2e5094787c659bd192",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "0ba31062eef1da7b4cee78e33c46f2aba124a25478d18f721490c2b3a53ba827"
+    },
+    {
+      "path": "core/config/devices/FireProtect2Crb.json",
+      "kind": "added",
+      "source_sha256_lf": "db32919e8310f9608e7951399889d41b3d61576781051a52028dec7bcf6103e3",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "ae42a5407f856c6a7e524ab94a90ec400eb805451809ffabfdd21d340ea2ece4"
+    },
+    {
+      "path": "core/config/devices/FireProtect2Csb.json",
+      "kind": "added",
+      "source_sha256_lf": "b11293182ef126b59f987af3720b5024310bbc0b83ca54dd7211b60a07c3333c",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "ead7561d1fbcee21ca3f13173b29e760307ff1aaa54daef338591cfa14b96014"
+    },
+    {
+      "path": "core/config/devices/FireProtect2HAc.json",
+      "kind": "added",
+      "source_sha256_lf": "7cc24658f7a4e8b9aa0a31f191d0f8da82ee583dad328a148e4d4da9ec75876a",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "998ec63ba6153ce622a11da21fede77660bb35c96d285d39420eda89ea7559e5"
+    },
+    {
+      "path": "core/config/devices/FireProtect2HRbUl.json",
+      "kind": "added",
+      "source_sha256_lf": "6c0372ee1098828229c0dc02cd4ffc773be733c7641f278cc37fa18282bc57dd",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "7d822e4e4d79328acb5c939764a5a0b279c12772169a5076b4e47775c5339fc3"
+    },
+    {
+      "path": "core/config/devices/FireProtect2HcAc.json",
+      "kind": "added",
+      "source_sha256_lf": "f84ee1068e7b6279607c091a10ac5b6b1c6b99665ecbb9d22fd5af63b05faec2",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "4c96cb4a2f9194aeffdca3c461499c2c9ef53a0657e16a7bed869a2f687ae3a3"
+    },
+    {
+      "path": "core/config/devices/FireProtect2Hcrb.json",
+      "kind": "added",
+      "source_sha256_lf": "ace19613c4018fcaaa31f7d0b700e7edefd03c0ff06c2f4bd9feaf3de09395af",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "dff9ac57cd213f75a66cc5562a2191e81266a558e2c47cbb82248a9d93675e6b"
+    },
+    {
+      "path": "core/config/devices/FireProtect2Hcsb.json",
+      "kind": "added",
+      "source_sha256_lf": "dc473fc5cc4d4e68f9d643eab010c18b20893f33251d90859964ae639f81adc7",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "5508094684308046d0f5eac55ad3d469ffa08ddfe13bffcddeeb3b66cc6c6589"
+    },
+    {
+      "path": "core/config/devices/FireProtect2Hrb.json",
+      "kind": "added",
+      "source_sha256_lf": "ea5e162e65dd2404a381fb9fb25ca418d34531928235b704359a3632d5178f1b",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "33048fabb060dc1b80d94f32977a5afff85cc234f9702c224a178ef51320d3da"
+    },
+    {
+      "path": "core/config/devices/FireProtect2HsAc.json",
+      "kind": "added",
+      "source_sha256_lf": "0c86d681b37c5fb8e88349f3b76a89ea1e3e4b5c34d5b07af435adb5125749f4",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "8451c38a0439d719f5561d289013bb67473ff429a225179fee1aeae5506f68ef"
+    },
+    {
+      "path": "core/config/devices/FireProtect2HsAcUl.json",
+      "kind": "added",
+      "source_sha256_lf": "0c9171e60d1980225ffbb77ed523d55933d57087d49675bbe508c676713c605e",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "1f764583b7b8583d0cf6d81164987134d610a97a7b67c4556ce703cbcd24884a"
+    },
+    {
+      "path": "core/config/devices/FireProtect2HsRbUl.json",
+      "kind": "added",
+      "source_sha256_lf": "32cfc709ce93cf3f1412d66361e5e4e167ddf4cb13f3ca5a9116c2466c3645f4",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "73a2bb7a2c97843eb1f28e9d211006e3bffe4c6417d035701e76977d1d8797fd"
+    },
+    {
+      "path": "core/config/devices/FireProtect2HsSbUl.json",
+      "kind": "added",
+      "source_sha256_lf": "312d9df1a534296030047f11c4ebe5aa94dd335edff02fcb47bfcf011da4874f",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "9b3a6f436022004210c277472775f888a6e58dd7c38de1d9336381ea12f1f862"
+    },
+    {
+      "path": "core/config/devices/FireProtect2Hsb.json",
+      "kind": "added",
+      "source_sha256_lf": "dc3fecaafd1fff514fb205a8a2df10f1b0db07aa8fcef4bf4d05c9c5f9aa7d53",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "ce78f23998acc759e8eaa17e395bed3f0b89e8d9d42feb045e25bcb25b7c7558"
+    },
+    {
+      "path": "core/config/devices/FireProtect2HscAc.json",
+      "kind": "added",
+      "source_sha256_lf": "93264e8fc547e787c3993c12196140abcc7c76a9dcf83faaaf44be7e678d31be",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "fb2c446fa9da10ff582679d946d22ccdd960ba8290b1720bd1e94557adc24780"
+    },
+    {
+      "path": "core/config/devices/FireProtect2HscAcUl.json",
+      "kind": "added",
+      "source_sha256_lf": "1a97e4cd3d86d832a437de97f6ed11a5029af919d0f27e483b01874deb13532a",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "493c35d4dca2b476503cc122a7d9849c7503c128b7d38b0fe072330bd4638d06"
+    },
+    {
+      "path": "core/config/devices/FireProtect2HscRbUl.json",
+      "kind": "added",
+      "source_sha256_lf": "892b5f94fa3133d6b57df181c07ebe0e1acac3682cf179a8c275aeb674a54aee",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "2639042783ac0e04e50431baa8342c4fa18a563b200af96b50a20c78f3958cdb"
+    },
+    {
+      "path": "core/config/devices/FireProtect2HscSbUl.json",
+      "kind": "added",
+      "source_sha256_lf": "d44bd70e4f9d24ca8e53d5b5d3d758023a50e093aad16d84167f26a4780e38db",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "18d2a046f34ec710fc08d5522bd554dfa867b622fbc786ae78e2e2a10cc3ec2c"
+    },
+    {
+      "path": "core/config/devices/FireProtect2Plus.json",
+      "kind": "modified",
+      "source_sha256_lf": "5fa72cb2686e656fba72e17e905759c78fe75d239e35474b009ba321a27eee0a",
+      "baseline_sha256_lf": "3aabb18335f308d42a62080849480dca11574bbf56c8eabac90f4717f66a7621",
+      "packaged_sha256": "935b1b8a8fa4bd7aae5cd416fe48b9aae37c3a441c03fdd662644a5e30c466cc"
+    },
+    {
+      "path": "core/config/devices/FireProtect2PlusSb.json",
+      "kind": "modified",
+      "source_sha256_lf": "11567edbf559eb7bf735e51fe5f11a465b06971705f8f026bf3efd6b3ce3679e",
+      "baseline_sha256_lf": "0a559efd22cc6b4331ada8b05c72799127ff530ba7585b55f13dfc1c193ee6c6",
+      "packaged_sha256": "d9276c38892db7fe081698cf296177ca1562e58d791dbd27a77b6191f034f127"
+    },
+    {
+      "path": "core/config/devices/FireProtect2Sb.json",
+      "kind": "added",
+      "source_sha256_lf": "0ec8594aa235c2bdbfd686cc97d62e3f6df98fe28f7149eec78d15cbfc18a052",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "0e372a151d428d38b681f80d4544a2f2674841988646731db300fc36675c4166"
+    },
+    {
+      "path": "core/config/devices/FireProtectPlus.json",
+      "kind": "modified",
+      "source_sha256_lf": "5f0307087f9fa2764d2118edc73fb2a5f8c029b12c56510e6f59c1f65292be7f",
+      "baseline_sha256_lf": "ef76969d421fe783d80b51ae7c796ca7157c7d07a73644bc5afaff645d0a713f",
+      "packaged_sha256": "8fcab4bf6cbd88b47ad7cb6dee8d64485c11cbb2e7d57598de574712c8556038"
+    },
+    {
+      "path": "core/config/devices/LifeQualityLite.json",
+      "kind": "added",
+      "source_sha256_lf": "ea2f55958802137f48ef7b37d174c3240dace6ed829e9d5bc33f0d9fad68c254",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "598964dfa3f0f10c0bd8fb39ee6fb18bc9334d2e889bedb967dd54786450a73f"
+    },
+    {
+      "path": "core/config/devices/MultiTransmitter.json",
+      "kind": "added",
+      "source_sha256_lf": "995327e389a7cd644b699d68708f481308a7c299b10b9db9c9f9c5a1db15bbd3",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "dacc7528e0a3399b0b86541f32f968e156cd2e04f8053191ad1c1e3ade4cf30c"
+    },
+    {
+      "path": "core/config/devices/MultiTransmitterFibra.json",
+      "kind": "added",
+      "source_sha256_lf": "666f50cebe1d75113acc87568113b7d5f8810887b41b318411bfd12c45f9d77b",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "4006b75359f9f0cb98ed79476d42f186c39b6a887469b5a465c76e3aceb0fd52"
+    },
+    {
+      "path": "core/config/devices/RangeExtender.json",
+      "kind": "modified",
+      "source_sha256_lf": "b01b54da1ec8e7760209abe1ea37cc6712a347f963241d8dd8fdab86d9a09f77",
+      "baseline_sha256_lf": "69cece624372e65593c6419794710c7935ec498f1356fdafc01fb81170b6dac6",
+      "packaged_sha256": "a2e495eef3c637c2a25e787c7d09e06a0d2b023282567ea590f1e46daaf7a870"
+    },
+    {
+      "path": "core/config/devices/RangeExtender2.json",
+      "kind": "added",
+      "source_sha256_lf": "19fed34957117e97a9235754bd78ed0361a29c3fca627aaad45833fad1cbc5f9",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "c2cc7f50e63b622ed54f5adcc099b7dbfe353a9ea418555d28f5044efa533fb5"
+    },
+    {
+      "path": "core/config/devices/SpaceControl.json",
+      "kind": "modified",
+      "source_sha256_lf": "0552370d97918fd66d9d3518d4c7c49a5087b535f624c3fc9c01553b095aca4b",
+      "baseline_sha256_lf": "5ef8f63ad74265e7ceb01547e64de9ec1646ada20d5c1e623215ebdaa0af0c61",
+      "packaged_sha256": "12abafb0e267f0c29fb7a854747af71eb771457fdcceb36e3540aad75d119dcd"
+    },
+    {
+      "path": "core/config/devices/SuperiorDoubleButtonG3.json",
+      "kind": "added",
+      "source_sha256_lf": "972ab0a74ce35113f18152001c9e2b87783fb0c91defb8ee5e91efcfb4801bec",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "1c2424e4ce73e0ca2bf9cad0ba6a061b8500364866f22b5d247831eb9375bbea"
+    },
+    {
+      "path": "core/config/devices/SuperiorMultiTransmitterG3.json",
+      "kind": "added",
+      "source_sha256_lf": "99963f7cb6cd3c760c7a896aa9ee259a8ec401c1bb64d6a1af7566d23e8a9eff",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "f07af09fbbfba5e9469d6c26d6fe65252590a34515e964724e5cbfba68ec0dad"
+    },
+    {
+      "path": "core/config/devices/SuperiorRexG3.json",
+      "kind": "added",
+      "source_sha256_lf": "5b93a1b53dad23b4a81d54471a58f90520ae290285f7eceaaffeb3ab2ed7a38f",
+      "baseline_sha256_lf": null,
+      "packaged_sha256": "dbf670f974fa71faec17494a40b8c0bad6bdcf11dc100fb871650648465b0914"
+    },
+    {
+      "path": "core/config/devices/Transmitter.json",
+      "kind": "baseline-carry-forward",
+      "source_sha256_lf": "a73b11ff6f41dc00d8f8e6e9a9c16866f5b470b5357c42fe28ef970c5c14b455",
+      "baseline_sha256_lf": "a73b11ff6f41dc00d8f8e6e9a9c16866f5b470b5357c42fe28ef970c5c14b455",
+      "packaged_sha256": "66191987bb64327496eb4aa6bd8f5913f876d09cd1bbbd8cee21248c6bd4aa9f"
+    },
+    {
+      "path": "core/config/devices/WallSwitch.json",
+      "kind": "modified",
+      "source_sha256_lf": "efe6f46d9e8dfc6dd2c55a9d84802e663af3cb954e0b35d9aa3f863ac4b9c3f8",
+      "baseline_sha256_lf": "1bb57f895b3bd75bdb70ebc6e9afb94d2867efe040b710af91e9387eead53568",
+      "packaged_sha256": "0757854ceea3343fa6b8e5c6dfad661164a830cc3be4004c38ae1df70f4a792c"
+    },
+    {
+      "path": "core/config/devices/WaterStop.json",
+      "kind": "modified",
+      "source_sha256_lf": "26db5f25f45999963bcdca86f9fa88698566d924f31f3983072b7cb5d720034a",
+      "baseline_sha256_lf": "62b6fa888e711c5e466b538583a9ea13b8880e20f2c4492ff47168c6d313b45a",
+      "packaged_sha256": "c1dcb1e79c886a77f472b6b82005e74cc7daeda2fce11da707e7fd95e352795c"
+    },
+    {
+      "path": "core/php/jeeAjaxSystem.php",
+      "kind": "modified",
+      "source_sha256_lf": "5029248f8ccca69e1a00fbcd65866c94a9329330841479cd5896bce35f34c4e7",
+      "baseline_sha256_lf": "45264cb8408260ee406ac8b01a7eae9e6e154a580e8125eb24758cb561e3ea46",
+      "packaged_sha256": "6f6996dbdfc9cb9f76576155adba74de3585b24158ccec0ea4898c9c8195db3a"
+    },
+    {
+      "path": "plugin_info/install.php",
+      "kind": "modified",
+      "source_sha256_lf": "c59e11c8d3ac5c32dea68ff85f19041fcf0e5c2ff65ec2c0c6f62d8a0e0121ef",
+      "baseline_sha256_lf": "70c7f98455048029edd149ed32b7b8d7470c4e1b015c2e022dd2ad3c94478c8b",
+      "packaged_sha256": "e259b316015defeaed0ddd505ed3c15d4c0fce2415960fc6545d0dc15823c157"
+    }
+  ]
+}

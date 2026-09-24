@@ -81,6 +81,8 @@ Do not subscribe AjaxBridge to broad topics like `jeedom/#` unless you know all 
 
 ### Ajax System Plugin
 
+Purchase and install the official **Ajax Systems** plugin from [Jeedom Market](https://market.jeedom.com/index.php?certification=Officiel&p=market&type=plugin&v=d) using your own account. The optional patch below supplements that installation; it does not provide a complete plugin or grant Market/cloud service access. This installation prerequisite does not restrict rights granted by the plugin's applicable open-source license; see the [licensing notes](../../Jeedom/LICENSING.md).
+
 In the Ajax System plugin:
 
 1. Connect using a normal Ajax user account. The official plugin docs say not to use a professional account for this plugin link.
@@ -89,6 +91,16 @@ In the Ajax System plugin:
 4. Synchronize equipment in Jeedom.
 5. Confirm Ajax devices appear as Jeedom equipment with info commands and, for controllable devices, action commands.
 6. Send or refresh MQTT discovery from MQTT Manager after devices are visible.
+
+### Optional Device Telemetry Patch
+
+[`Jeedom/`](../../Jeedom/README.md) contains the prepared source overlay, detailed Ukrainian installation/rollback instructions, checksums and offline validation for the Ajax Systems plugin. The [metric reference](../../Jeedom/METRICS.md) lists exact models and logical IDs for Button/DoubleButton, SpaceControl, WaterStop, ReX, MultiTransmitter, FireProtect and LifeQualityLite, plus Transmitter temperature and WallSwitch/Relay state.
+
+The patch parses existing snapshots and cloud callbacks without new polling or per-metric API calls. A manual synchronization still makes the plugin's usual discovery/device requests. After backing up Jeedom and installing the files over a compatible official plugin, synchronize once to add missing info commands, then republish MQTT Manager discovery so AjaxBridge learns the new commands. Existing command IDs and settings are preserved; a server reboot is normally unnecessary.
+
+The patched WallSwitch has an `Etat` / `realState` info command (`1` = on, `0` = off); Relay's existing command gains API `switchState` parsing. The plugin uses reported device data rather than assuming that sending an action changed the physical state. Socket templates and behavior are unchanged. The action-only WallSwitch fallback documented below remains relevant to older/unpatched installations.
+
+Availability depends on what the device and Jeedom cloud actually return. Button equipment cannot be created from a template alone when the cloud omits it, and this patch does not add short/long-press automation. Missing metrics retain their last value. LifeQualityLite humidity scaling still needs confirmation against live data. See [troubleshooting and limitations](../../Jeedom/README.md#перевірка-результату-та-відомі-обмеження).
 
 ## Configure AjaxBridge
 
@@ -146,7 +158,7 @@ On startup, AjaxBridge loads this cache before subscribing to Jeedom MQTT topics
 - retained Ajax/SIA account and zone discovery/state
 - retained Jeedom Home Assistant discovery configs
 - retained Jeedom state payloads, including measurements such as temperature, power, current, voltage, battery, humidity, and energy
-- the last known state of action-only WallSwitch controls, even though those devices do not expose an `Etat`/`realState` command
+- the last known state of action-only WallSwitch controls on older/unpatched plugin installations that do not expose an `Etat`/`realState` command
 
 That means a normal bridge restart should not require forcing Jeedom MQTT Manager to resend eqLogic discovery. Force Jeedom discovery only when `data/jeedom.json` is missing, empty, stale, or you have changed Jeedom equipment/commands and want the bridge to learn the new command list immediately.
 

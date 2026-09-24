@@ -1,0 +1,80 @@
+{
+  "_ajaxbridge_patch_notice": "Modified 2026-09-24 by AjaxBridge contributors: expanded device telemetry and state parsing. See ajaxbridge-patch/NOTICE.md and license texts; original Jeedom notices remain applicable.",
+  "name": "Life Quality Lite",
+  "commands": [
+    {
+      "name": "Temperature",
+      "type": "info",
+      "subtype": "numeric",
+      "isVisible": 1,
+      "isHistorized": 1,
+      "unite": "°C",
+      "generic_type": "TEMPERATURE",
+      "logicalId": "actualTemperature",
+      "configuration": {
+        "calculValueOffset": "#value# / 10"
+      }
+    },
+    {
+      "name": "Humidity",
+      "type": "info",
+      "subtype": "numeric",
+      "isVisible": 1,
+      "isHistorized": 1,
+      "unite": "%",
+      "generic_type": "HUMIDITY",
+      "logicalId": "actualHumidity",
+      "configuration": {
+        "calculValueOffset": "#value# / 10"
+      }
+    },
+    {
+      "name": "Battery",
+      "type": "info",
+      "subtype": "numeric",
+      "isVisible": 1,
+      "isHistorized": 0,
+      "unite": "%",
+      "generic_type": "BATTERY",
+      "logicalId": "batteryChargeLevelPercentage"
+    },
+    {
+      "name": "Signal",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "signalLevel"
+    },
+    {
+      "name": "En ligne",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "online",
+      "configuration": {
+        "repeatEventManagement": "always"
+      }
+    },
+    {
+      "name": "Trafiqué",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "tampered",
+      "configuration": {
+        "repeatEventManagement": "always"
+      }
+    },
+    {
+      "name": "Nombre de problèmes",
+      "type": "info",
+      "subtype": "numeric",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "issuesCount"
+    }
+  ]
+}

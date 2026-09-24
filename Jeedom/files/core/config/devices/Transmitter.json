@@ -1,0 +1,59 @@
+{
+  "_ajaxbridge_patch_notice": "Packaged 2026-09-24 by AjaxBridge contributors: carries forward Transmitter temperature already present in the local baseline; only this notice is new. See ajaxbridge-patch/NOTICE.md and license texts.",
+  "name" : "Transmitter",
+  "commands" : [
+    {
+      "name": "Source evenement",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "sourceObjectName"
+    },
+    {
+      "name": "Evenement",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "event"
+    },
+    {
+      "name": "Code evenement",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "eventCode"
+    },
+    {
+      "name": "En ligne",
+      "type": "info",
+      "subtype": "binary",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "online",
+      "configuration": {
+        "repeatEventManagement": "always"
+      }
+    },
+    {
+      "name": "Signal",
+      "type": "info",
+      "subtype": "string",
+      "isVisible": 0,
+      "isHistorized": 0,
+      "logicalId": "signalLevel"
+    },
+    {
+      "name": "Température",
+      "type": "info",
+      "subtype": "numeric",
+      "logicalId": "temperature",
+      "generic_type": "TEMPERATURE",
+      "unite": "°C",
+      "isVisible": 1,
+      "isHistorized": 1
+    }
+  ]
+}

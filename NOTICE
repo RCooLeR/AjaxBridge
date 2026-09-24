@@ -3,3 +3,13 @@ AjaxBridge
 AjaxBridge is an unofficial DIY open-source project for compatibility and integration. It is not affiliated with, endorsed by, or sponsored by Ajax Systems.
 
 Ajax, Ajax Systems, and related product names are trademarks or registered trademarks of their respective owners. They are referenced only to describe compatibility and integration.
+
+The optional Jeedom/files/ overlay contains third-party Ajax Systems plugin
+source from Jeedom SAS and local modifications. The AjaxBridge MIT license does
+not relicense those files. Upstream license notices are retained; the source
+snapshot has conflicting GPLv2, GPLv3-or-later and unversioned AGPL declarations.
+See Jeedom/LICENSING.md and Jeedom/files/ajaxbridge-patch/NOTICE.md for provenance,
+license texts and unresolved scope/version details. This patch is not endorsed
+by Jeedom or Ajax Systems and does not grant access to Jeedom Market or cloud
+services. The documented installation starts with purchase of the official
+plugin; this is not an added restriction on rights under its applicable license.

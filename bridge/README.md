@@ -27,6 +27,7 @@ AjaxBridge is an unofficial DIY open-source project for compatibility and integr
 - [Overview](./docs/overview.md)
 - [SIA integration](./docs/sia.md)
 - [Jeedom integration](./docs/jeedom.md)
+- [Jeedom plugin patch files and installation guide (Українською)](../Jeedom/README.md)
 - [Prometheus metrics](./docs/prometheus.md)
 - [Notifications](./docs/notifications.md)
 - [Admin panel](./docs/admin.md)
