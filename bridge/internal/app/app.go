@@ -118,6 +118,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 	var jeedomController *jeedom.Controller
 	var jeedomPublisher *jeedom.Publisher
 	if cfg.JeedomEnabled {
+		jeedomStoreLoaded := false
 		resolver := jeedom.NewCatalogResolver(devices, jeedom.CatalogResolverConfig{
 			Account:          cfg.Account,
 			AccountNames:     cfg.JeedomAccountNames,
@@ -128,10 +129,18 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 			log.Warn().Err(err).Str("path", cfg.JeedomStorePath).Msg("Jeedom cache not loaded; starting empty")
 			jeedomStore = jeedom.NewStoreWithResolver(cfg.JeedomEmptyValuePolicy, resolver)
 			jeedomStore.SetPath(cfg.JeedomStorePath)
-		} else if cfg.JeedomStorePath != "" {
-			log.Info().Str("path", cfg.JeedomStorePath).Int("devices", len(jeedomStore.Devices())).Msg("Jeedom cache loaded")
+		} else {
+			jeedomStoreLoaded = true
+			if cfg.JeedomStorePath != "" {
+				log.Info().Str("path", cfg.JeedomStorePath).Int("devices", len(jeedomStore.Devices())).Msg("Jeedom cache loaded")
+			}
 		}
 		jeedomStore.ReconcileResolver(resolver)
+		if jeedomStoreLoaded && cfg.JeedomStorePath != "" {
+			if saveErr := jeedomStore.Save(ctx); saveErr != nil {
+				log.Warn().Err(saveErr).Str("path", cfg.JeedomStorePath).Msg("persist reconciled Jeedom cache")
+			}
+		}
 		if mqttPublisher != nil {
 			jeedomController = jeedom.NewController(jeedom.ControllerConfig{
 				Enabled:              cfg.JeedomControlsEnabled,

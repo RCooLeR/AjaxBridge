@@ -284,6 +284,10 @@ func TestStoreFindsLegacyActionsForLinkedSIADevice(t *testing.T) {
 	if action.CommandID != "221" || action.DeviceSlug != "sia_a0f80d_zone_14" || action.DeviceType != "Socket" {
 		t.Fatalf("action = %#v", action)
 	}
+	byCommandID, ok := store.ActionByCommandID("221")
+	if !ok || byCommandID.DeviceSlug != "sia_a0f80d_zone_14" {
+		t.Fatalf("ActionByCommandID selected legacy mirror: %#v, found=%v", byCommandID, ok)
+	}
 	device, ok := store.Device("sia_a0f80d_zone_14")
 	if !ok {
 		t.Fatal("missing linked SIA device")
@@ -338,8 +342,19 @@ func TestStorePropagatesLegacyDiscoveryActionsToExistingLinkedDevice(t *testing.
 	if refreshed.Device.Actions["on"].CommandID != "220" {
 		t.Fatalf("remaining linked action = %#v", refreshed.Device.Actions)
 	}
-	if len(refreshed.Device.PendingActionDiscoveryCleanups) != 1 || refreshed.Device.PendingActionDiscoveryCleanups[0].CommandID != "221" {
+	if len(refreshed.Device.PendingActionDiscoveryCleanups) != 1 || refreshed.Device.PendingActionDiscoveryCleanups[0].CommandID != "221" || refreshed.Device.PendingActionDiscoveryCleanups[0].DeviceSlug != "sia_a0f80d_zone_14" {
 		t.Fatalf("linked action cleanup queue = %#v", refreshed.Device.PendingActionDiscoveryCleanups)
+	}
+	legacyCleanupFound := false
+	for _, previous := range refreshed.PreviousDevices {
+		for _, cleanup := range previous.PendingActionDiscoveryCleanups {
+			if cleanup.CommandID == "221" && cleanup.DeviceSlug == "battery" {
+				legacyCleanupFound = true
+			}
+		}
+	}
+	if !legacyCleanupFound {
+		t.Fatalf("previous devices = %#v, missing legacy off/221 cleanup", refreshed.PreviousDevices)
 	}
 }
 

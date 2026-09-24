@@ -130,6 +130,7 @@ func (s *Service) HandleMessage(ctx context.Context, topic string, payload []byt
 		result := s.store.ApplyDiscovery(discovery)
 		s.persist(ctx, "persist Jeedom MQTT discovery")
 		if s.publisher != nil {
+			s.publishPreviousDevices(ctx, result.PreviousDevices)
 			published, err := s.publisher.PublishDeviceWithResult(ctx, result.Device)
 			if err != nil {
 				s.log.Debug().Err(err).Str("device", result.Device.DeviceSlug).Msg("publish Jeedom MQTT discovery state")
@@ -154,7 +155,7 @@ func (s *Service) HandleMessage(ctx context.Context, topic string, payload []byt
 	}
 
 	result := s.store.Apply(evt)
-	if result.UpdatedValue {
+	if result.UpdatedValue || result.StoreChanged {
 		s.persist(ctx, "persist Jeedom MQTT state")
 	}
 	if result.EmptyValue && s.metrics != nil {
@@ -168,11 +169,25 @@ func (s *Service) HandleMessage(ctx context.Context, topic string, payload []byt
 	}
 
 	if s.publisher != nil {
+		s.publishPreviousDevices(ctx, result.PreviousDevices)
 		published, err := s.publisher.PublishDeviceWithResult(ctx, result.Device)
 		if err != nil {
 			s.log.Debug().Err(err).Str("device", result.Device.DeviceSlug).Msg("publish Jeedom MQTT state")
 		} else if published {
 			s.acknowledgePublishedCleanups(ctx, result.Device)
+		}
+	}
+}
+
+func (s *Service) publishPreviousDevices(ctx context.Context, devices []Device) {
+	for _, device := range devices {
+		published, err := s.publisher.PublishDeviceWithResult(ctx, device)
+		if err != nil {
+			s.log.Debug().Err(err).Str("device", device.DeviceSlug).Msg("publish previous Jeedom command owner state")
+			continue
+		}
+		if published {
+			s.acknowledgePublishedCleanups(ctx, device)
 		}
 	}
 }

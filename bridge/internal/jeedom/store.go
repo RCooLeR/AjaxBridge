@@ -121,17 +121,20 @@ type ControlAudit struct {
 }
 
 type ApplyResult struct {
-	Device       Device
-	Command      Command
-	Mapping      Mapping
-	EmptyValue   bool
-	UpdatedValue bool
-	NumericValue float64
-	HasNumeric   bool
+	Device          Device
+	PreviousDevices []Device
+	Command         Command
+	Mapping         Mapping
+	EmptyValue      bool
+	UpdatedValue    bool
+	StoreChanged    bool
+	NumericValue    float64
+	HasNumeric      bool
 }
 
 type ApplyDiscoveryResult struct {
 	Device          Device
+	PreviousDevices []Device
 	Actions         []Action
 	RemovedCommands []Command
 	RemovedActions  []Action
@@ -232,6 +235,7 @@ func (s *Store) Apply(evt Event) ApplyResult {
 	device.LinkedZone = identity.LinkedZone
 	device.DiscoveryDisabled = identity.DiscoveryDisabled
 	s.mergeLegacyActionsLocked(device)
+	transferred, previousSlugs, transferredCommand, ownershipChanged := s.takeCommandFromOtherOwnersLocked(evt.CommandID, deviceSlug)
 
 	command := Command{
 		CommandID:      evt.CommandID,
@@ -252,6 +256,14 @@ func (s *Store) Apply(evt Event) ApplyResult {
 		LastUpdate:     now,
 	}
 	existing, hasExisting := device.RawCommands[evt.CommandID]
+	if transferredCommand {
+		if hasExisting {
+			existing = commandWithNewestValue(existing, transferred)
+		} else {
+			existing = transferred
+			hasExisting = true
+		}
+	}
 	if hasExisting {
 		command.LogicalID = existing.LogicalID
 		command.GenericType = existing.GenericType
@@ -261,11 +273,13 @@ func (s *Store) Apply(evt Event) ApplyResult {
 		command.Value = existing.Value
 		command.LastValueAt = existing.LastValueAt
 		command.EmptyValue = existing.EmptyValue
+		seedDeviceValueFromCommand(device, &command, existing, mapping)
 	}
 
 	result := ApplyResult{
-		Mapping:    mapping,
-		EmptyValue: evt.EmptyValue(),
+		Mapping:      mapping,
+		EmptyValue:   evt.EmptyValue(),
+		StoreChanged: ownershipChanged,
 	}
 
 	if result.EmptyValue {
@@ -295,11 +309,13 @@ func (s *Store) Apply(evt Event) ApplyResult {
 
 	device.RawCommands[evt.CommandID] = command
 	if hasExisting && existing.Metric != "" && existing.Metric != command.Metric {
-		deleteUnreferencedMetric(device, existing.Metric)
+		rebuildMetricValue(device, existing.Metric)
 	}
+	rebuildMetricValue(device, command.Metric)
 	s.commands[evt.CommandID] = deviceSlug
 	s.bumpDevicePublishRevisionLocked(device)
 	result.Device = copyDevice(*device)
+	result.PreviousDevices = s.deviceSnapshotsLocked(previousSlugs)
 	result.Command = command
 	return result
 }
@@ -312,6 +328,30 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Retained Jeedom discovery may contain older load/current samples than a
+	// successful optimistic toggle recorded by the bridge. Keep those states
+	// across metadata refreshes unless discovery supplies an observed state
+	// command, which is authoritative.
+	optimisticStates := make(map[string]any)
+	optimisticStatesByAction := make(map[string]any)
+	for slug, current := range s.devices {
+		if current == nil {
+			continue
+		}
+		state, exists := current.Values["state"]
+		if exists && hasActionOnlyToggleControl(current) && !hasObservedStateCommand(current) {
+			optimisticStates[slug] = state
+			for _, action := range current.Actions {
+				switch NormalizeControlAction(action.Action) {
+				case "on", "off":
+					if action.CommandID != "" && strings.TrimSpace(action.StateCommandID) == "" {
+						optimisticStatesByAction[action.CommandID] = state
+					}
+				}
+			}
+		}
+	}
 
 	identity := s.identityForDiscovery(discovery)
 	deviceSlug := identity.DeviceSlug
@@ -365,35 +405,64 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 	}
 	s.mergeLegacyActionsLocked(device)
 
+	previousSlugs := make(map[string]struct{})
 	currentCommandIDs := make(map[string]struct{}, len(discovery.InfoCommands))
-	for _, info := range discovery.InfoCommands {
+	infoCommandIDs := make([]string, 0, len(discovery.InfoCommands))
+	for commandID := range discovery.InfoCommands {
+		infoCommandIDs = append(infoCommandIDs, commandID)
+	}
+	sort.Strings(infoCommandIDs)
+	for _, commandID := range infoCommandIDs {
+		info := discovery.InfoCommands[commandID]
 		currentCommandIDs[info.CommandID] = struct{}{}
 	}
 	removedCommands := make([]Command, 0)
-	for commandID, command := range device.RawCommands {
-		if command.CommandID == "" {
+	ownerSlugs := make([]string, 0, len(s.devices))
+	for slug := range s.devices {
+		ownerSlugs = append(ownerSlugs, slug)
+	}
+	sort.Strings(ownerSlugs)
+	for _, ownerSlug := range ownerSlugs {
+		owner := s.devices[ownerSlug]
+		if owner == nil {
 			continue
 		}
-		if _, current := currentCommandIDs[commandID]; current {
-			continue
+		removedFromOwner := make([]Command, 0)
+		for commandID, command := range owner.RawCommands {
+			if command.CommandID == "" {
+				continue
+			}
+			if _, current := currentCommandIDs[commandID]; current {
+				continue
+			}
+			ownedByDiscovery := discovery.EqLogicID != "" && command.EqLogicID == discovery.EqLogicID
+			legacyJeedomID := owner.JeedomID
+			if ownerSlug == deviceSlug {
+				legacyJeedomID = firstNonEmpty(legacyJeedomID, previousJeedomID)
+			}
+			legacyReplacement := command.EqLogicID == "" &&
+				legacyJeedomID == discovery.EqLogicID &&
+				discoveryReplacesCommand(discovery, command)
+			if !ownedByDiscovery && !legacyReplacement {
+				continue
+			}
+			removedCommands = append(removedCommands, command)
+			removedFromOwner = append(removedFromOwner, command)
+			delete(owner.RawCommands, commandID)
+			delete(s.commands, commandID)
+			rebuildMetricValue(owner, command.Metric)
 		}
-		ownedByDiscovery := command.EqLogicID == discovery.EqLogicID
-		legacyReplacement := command.EqLogicID == "" &&
-			previousJeedomID == discovery.EqLogicID &&
-			discoveryReplacesCommand(discovery, command)
-		if !ownedByDiscovery && !legacyReplacement {
-			continue
+		if len(removedFromOwner) > 0 {
+			queueCommandCleanups(owner, removedFromOwner)
+			s.bumpDevicePublishRevisionLocked(owner)
+			previousSlugs[ownerSlug] = struct{}{}
 		}
-		removedCommands = append(removedCommands, command)
-		delete(device.RawCommands, commandID)
-		delete(s.commands, commandID)
 	}
 	sort.Slice(removedCommands, func(i, j int) bool {
 		return removedCommands[i].CommandID < removedCommands[j].CommandID
 	})
-	queueCommandCleanups(device, removedCommands)
-
-	for _, info := range discovery.InfoCommands {
+	for _, commandID := range infoCommandIDs {
+		info := discovery.InfoCommands[commandID]
 		mapping := MappingFor(Event{
 			Topic:       "jeedom/cmd/event/" + info.CommandID,
 			CommandID:   info.CommandID,
@@ -431,21 +500,31 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 			Historized:     info.Historized,
 			LastUpdate:     now,
 		}
+		transferred, movedSlugs, transferredCommand, _ := s.takeCommandFromOtherOwnersLocked(info.CommandID, deviceSlug)
+		for slug := range movedSlugs {
+			previousSlugs[slug] = struct{}{}
+		}
 		existing, hasExisting := device.RawCommands[info.CommandID]
+		if transferredCommand {
+			if hasExisting {
+				existing = commandWithNewestValue(existing, transferred)
+			} else {
+				existing = transferred
+				hasExisting = true
+			}
+		}
 		if hasExisting {
 			command.Value = existing.Value
 			command.LastValueAt = existing.LastValueAt
 			command.EmptyValue = existing.EmptyValue
-			if existing.LastUpdate.After(command.LastUpdate) {
+			if existing.Value == nil && existing.EmptyValue {
+				// Discovery refreshes command metadata, not the time at which an
+				// explicit unknown value was observed.
+				command.LastUpdate = existing.LastUpdate
+			} else if existing.LastUpdate.After(command.LastUpdate) {
 				command.LastUpdate = existing.LastUpdate
 			}
-			if existing.Value != nil {
-				if value, ok := mappedAnyValue(existing.Value, mapping, deviceTypeForNormalization(*device)); ok {
-					command.Value = value
-					device.Values[mapping.Metric] = value
-					applyDerivedWaterStopState(mapping, device, value)
-				}
-			}
+			seedDeviceValueFromCommand(device, &command, existing, mapping)
 		}
 		if !EmptyRawValue(info.Value) && (!hasExisting || existing.LastValueAt.IsZero()) {
 			if value, ok := mappedValue(Event{Value: info.Value}, mapping, deviceTypeForNormalization(*device)); ok {
@@ -460,38 +539,54 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 		}
 		device.RawCommands[info.CommandID] = command
 		if hasExisting && existing.Metric != "" && existing.Metric != command.Metric {
-			deleteUnreferencedMetric(device, existing.Metric)
+			rebuildMetricValue(device, existing.Metric)
 		}
+		rebuildMetricValue(device, command.Metric)
 		s.commands[info.CommandID] = deviceSlug
 	}
-	for _, command := range removedCommands {
-		deleteUnreferencedMetric(device, command.Metric)
-	}
-
-	actions := make([]Action, 0, len(discovery.Actions))
 	currentActionIDs := make(map[string]struct{}, len(discovery.Actions))
-	for _, actionCommand := range discovery.Actions {
+	actionCommandIDs := make([]string, 0, len(discovery.Actions))
+	for commandID, actionCommand := range discovery.Actions {
+		actionCommandIDs = append(actionCommandIDs, commandID)
 		currentActionIDs[actionCommand.CommandID] = struct{}{}
 	}
+	sort.Strings(actionCommandIDs)
 	removedActions := make([]Action, 0)
-	for actionName, action := range device.Actions {
-		if action.EqLogicID != discovery.EqLogicID {
+	for _, ownerSlug := range ownerSlugs {
+		owner := s.devices[ownerSlug]
+		if owner == nil {
 			continue
 		}
-		if _, current := currentActionIDs[action.CommandID]; current {
-			continue
+		removedFromOwner := make([]Action, 0)
+		for actionName, action := range owner.Actions {
+			if discovery.EqLogicID == "" || action.EqLogicID != discovery.EqLogicID {
+				continue
+			}
+			if _, current := currentActionIDs[action.CommandID]; current {
+				continue
+			}
+			removedActions = append(removedActions, action)
+			removedFromOwner = append(removedFromOwner, action)
+			delete(owner.Actions, actionName)
 		}
-		removedActions = append(removedActions, action)
-		delete(device.Actions, actionName)
+		if len(removedFromOwner) > 0 {
+			queueActionCleanups(owner, removedFromOwner)
+			s.bumpDevicePublishRevisionLocked(owner)
+			previousSlugs[ownerSlug] = struct{}{}
+		}
 	}
 	sort.Slice(removedActions, func(i, j int) bool {
 		return removedActions[i].CommandID < removedActions[j].CommandID
 	})
-	queueActionCleanups(device, removedActions)
-	for _, actionCommand := range discovery.Actions {
+	for _, commandID := range actionCommandIDs {
+		actionCommand := discovery.Actions[commandID]
 		actionName := normalizeDiscoveryAction(actionCommand)
 		if actionName == "" {
 			actionName = "cmd_" + actionCommand.CommandID
+		}
+		transferred, movedSlugs, transferredAction := s.takeActionFromOtherOwnersLocked(actionCommand.CommandID, deviceSlug, actionName)
+		for slug := range movedSlugs {
+			previousSlugs[slug] = struct{}{}
 		}
 		allowed, denyReason := controlAllowed(device.JeedomDeviceType, actionName)
 		action := Action{
@@ -509,15 +604,22 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 			Allowed:        allowed,
 			DenyReason:     denyReason,
 		}
-		if existing, ok := device.Actions[actionName]; ok {
+		storageKey := actionName
+		if existing, ok := device.Actions[actionName]; ok && existing.CommandID == action.CommandID {
 			action.LastRequestedAt = existing.LastRequestedAt
 			action.LastRequestSource = existing.LastRequestSource
+		} else if ok {
+			storageKey = actionCollisionStorageKey(device.Actions, actionName, action.CommandID)
 		}
-		device.Actions[actionName] = action
-		actions = append(actions, action)
+		if transferredAction && transferred.LastRequestedAt.After(action.LastRequestedAt) {
+			action.LastRequestedAt = transferred.LastRequestedAt
+			action.LastRequestSource = transferred.LastRequestSource
+		}
+		device.Actions[storageKey] = action
 	}
 
 	s.bumpDevicePublishRevisionLocked(device)
+	primary := device
 	if target := s.linkedTargetForLegacyLocked(deviceSlug); target != nil {
 		for _, removed := range removedActions {
 			for actionName, targetAction := range target.Actions {
@@ -528,20 +630,80 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 		}
 		s.copyActionsLocked(target, device)
 		s.bumpDevicePublishRevisionLocked(target)
-		resultDevice := copyDevice(*target)
-		queueCommandCleanups(&resultDevice, removedCommands)
-		queueActionCleanups(&resultDevice, removedActions)
-		return ApplyDiscoveryResult{
-			Device:          resultDevice,
-			Actions:         actionsForDevice(target),
-			RemovedCommands: removedCommands,
-			RemovedActions:  removedActions,
-		}
+		primary = target
 	}
 
+	if s.resolver != nil {
+		for slug := range s.rehomeResolvedCommandsLocked(s.resolver) {
+			previousSlugs[slug] = struct{}{}
+		}
+		for slug := range s.rehomeResolvedActionsLocked(s.resolver) {
+			previousSlugs[slug] = struct{}{}
+		}
+		for slug := range s.resolveActionCollisionsLocked(s.resolver) {
+			previousSlugs[slug] = struct{}{}
+		}
+		s.deduplicateCommandOwnersLocked()
+		for slug := range s.removeCanonicalLegacyAliasesLocked() {
+			previousSlugs[slug] = struct{}{}
+		}
+		s.rebuildIndexesLocked()
+	}
+
+	affectedSlugs := make(map[string]struct{}, len(previousSlugs)+1)
+	for slug := range previousSlugs {
+		affectedSlugs[slug] = struct{}{}
+	}
+	affectedSlugs[primary.DeviceSlug] = struct{}{}
+	for slug := range affectedSlugs {
+		current := s.devices[slug]
+		if current == nil || !hasActionOnlyToggleControl(current) || hasObservedStateCommand(current) {
+			continue
+		}
+		state, restore := optimisticStates[slug]
+		if !restore {
+			for _, action := range current.Actions {
+				if candidate, ok := optimisticStatesByAction[action.CommandID]; ok {
+					state = candidate
+					restore = true
+					break
+				}
+			}
+		}
+		if !restore {
+			continue
+		}
+		existingState, stateExists := current.Values["state"]
+		sameState := stateExists && existingState == nil && state == nil
+		if existingBool, ok := existingState.(bool); ok {
+			if stateBool, stateOK := state.(bool); stateOK && existingBool == stateBool {
+				sameState = true
+			}
+		}
+		if sameState {
+			continue
+		}
+		current.Values["state"] = state
+		s.bumpDevicePublishRevisionLocked(current)
+		previousSlugs[slug] = struct{}{}
+	}
+
+	affectedSlugs = make(map[string]struct{}, len(previousSlugs)+1)
+	for slug := range previousSlugs {
+		affectedSlugs[slug] = struct{}{}
+	}
+	affectedSlugs[primary.DeviceSlug] = struct{}{}
+	orderedDevices := s.deviceSnapshotsInPublishOrderLocked(affectedSlugs)
+	if len(orderedDevices) == 0 {
+		orderedDevices = []Device{copyDevice(*primary)}
+	}
+	resultDevice := orderedDevices[len(orderedDevices)-1]
+	previousDevices := orderedDevices[:len(orderedDevices)-1]
+	resultOwner := s.devices[resultDevice.DeviceSlug]
 	return ApplyDiscoveryResult{
-		Device:          copyDevice(*device),
-		Actions:         actions,
+		Device:          resultDevice,
+		PreviousDevices: previousDevices,
+		Actions:         actionsForDevice(resultOwner),
 		RemovedCommands: removedCommands,
 		RemovedActions:  removedActions,
 	}
@@ -573,9 +735,713 @@ func (s *Store) ReconcileResolver(resolver IdentityResolver) []Device {
 			s.mergeDeviceIntoIdentityLocked(slug, identity)
 		}
 		s.rebuildIndexesLocked()
+		// Reconciliation can change identity and Home Assistant metadata without
+		// moving a command. Advance every returned snapshot past the prior
+		// generation so a delayed pre-catalog publish cannot overwrite it. Command
+		// and action rehoming below then advances source and destination revisions
+		// again, preserving the required source-before-destination publish order.
+		s.ensureDevicePublishRevisionsLocked()
+		s.bumpAllDevicePublishRevisionsLocked()
+		s.rehomeResolvedCommandsLocked(resolver)
+		s.rehomeResolvedActionsLocked(resolver)
+		s.resolveActionCollisionsLocked(resolver)
+		s.deduplicateCommandOwnersLocked()
+		s.removeCanonicalLegacyAliasesLocked()
+		for _, device := range s.devices {
+			rebuildAllMetricValuesPreservingOptimisticState(device)
+		}
+		s.rebuildIndexesLocked()
 	}
-	s.bumpAllDevicePublishRevisionsLocked()
-	return s.devicesLocked()
+	s.ensureDevicePublishRevisionsLocked()
+	allSlugs := make(map[string]struct{}, len(s.devices))
+	for slug := range s.devices {
+		allSlugs[slug] = struct{}{}
+	}
+	return s.deviceSnapshotsInPublishOrderLocked(allSlugs)
+}
+
+// takeCommandFromOtherOwnersLocked enforces the global Jeedom command-ID
+// ownership contract. Moving an active command must not queue discovery
+// cleanup because the retained discovery topic and unique ID are unchanged.
+func (s *Store) takeCommandFromOtherOwnersLocked(commandID, targetSlug string) (Command, map[string]struct{}, bool, bool) {
+	previousSlugs := make(map[string]struct{})
+	var transferred Command
+	found := false
+	changed := false
+	slugs := make([]string, 0, len(s.devices))
+	for slug := range s.devices {
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+
+	for _, slug := range slugs {
+		device := s.devices[slug]
+		if device == nil {
+			continue
+		}
+		cleanupRemoved := removePendingCommandCleanup(device, commandID)
+		changed = changed || cleanupRemoved
+		if slug == targetSlug {
+			continue
+		}
+		command, ok := device.RawCommands[commandID]
+		if !ok {
+			if cleanupRemoved {
+				s.bumpDevicePublishRevisionLocked(device)
+				previousSlugs[slug] = struct{}{}
+			}
+			continue
+		}
+		if !found {
+			transferred = command
+			found = true
+		} else {
+			transferred = commandWithNewestValue(transferred, command)
+		}
+		delete(device.RawCommands, commandID)
+		rebuildMetricValue(device, command.Metric)
+		s.bumpDevicePublishRevisionLocked(device)
+		previousSlugs[slug] = struct{}{}
+		changed = true
+	}
+	if owner := s.commands[commandID]; owner != "" && owner != targetSlug {
+		delete(s.commands, commandID)
+	}
+	return transferred, previousSlugs, found, changed
+}
+
+func removePendingCommandCleanup(device *Device, commandID string) bool {
+	if device == nil || commandID == "" || len(device.PendingDiscoveryCleanups) == 0 {
+		return false
+	}
+	kept := device.PendingDiscoveryCleanups[:0]
+	removed := false
+	for _, command := range device.PendingDiscoveryCleanups {
+		if command.CommandID != commandID {
+			kept = append(kept, command)
+		} else {
+			removed = true
+		}
+	}
+	device.PendingDiscoveryCleanups = kept
+	return removed
+}
+
+func (s *Store) takeActionFromOtherOwnersLocked(commandID, targetSlug, targetActionName string) (Action, map[string]struct{}, bool) {
+	previousSlugs := make(map[string]struct{})
+	var transferred Action
+	found := false
+	slugs := make([]string, 0, len(s.devices))
+	for slug := range s.devices {
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+
+	for _, slug := range slugs {
+		device := s.devices[slug]
+		if device == nil {
+			continue
+		}
+		if removePendingActionCleanup(device, targetSlug, commandID, targetActionName) {
+			s.bumpDevicePublishRevisionLocked(device)
+			if slug != targetSlug {
+				previousSlugs[slug] = struct{}{}
+			}
+		}
+		actionNames := make([]string, 0, len(device.Actions))
+		for actionName := range device.Actions {
+			actionNames = append(actionNames, actionName)
+		}
+		sort.Strings(actionNames)
+		for _, actionName := range actionNames {
+			action := device.Actions[actionName]
+			if action.CommandID != commandID || (slug == targetSlug && actionName == targetActionName) {
+				continue
+			}
+			if slug != targetSlug && s.intentionalLegacyActionMirrorLocked(slug, targetSlug, commandID) {
+				continue
+			}
+			if !found || action.LastRequestedAt.After(transferred.LastRequestedAt) {
+				transferred = action
+				found = true
+			}
+			delete(device.Actions, actionName)
+			queueActionCleanups(device, []Action{action})
+			if slug != targetSlug {
+				previousSlugs[slug] = struct{}{}
+				s.bumpDevicePublishRevisionLocked(device)
+			}
+		}
+	}
+	return transferred, previousSlugs, found
+}
+
+func (s *Store) intentionalLegacyActionMirrorLocked(sourceSlug, targetSlug, commandID string) bool {
+	source, target := s.devices[sourceSlug], s.devices[targetSlug]
+	if source == nil || target == nil {
+		return false
+	}
+	if !containsString(target.LegacyDeviceSlugs, sourceSlug) && !containsString(source.LegacyDeviceSlugs, targetSlug) {
+		return false
+	}
+	for _, action := range source.Actions {
+		if action.CommandID == commandID {
+			for _, targetAction := range target.Actions {
+				if targetAction.CommandID == commandID {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func removePendingActionCleanup(device *Device, activeDeviceSlug, commandID, activeActionName string) bool {
+	if device == nil || commandID == "" || len(device.PendingActionDiscoveryCleanups) == 0 {
+		return false
+	}
+	activeDeviceSlug = Slug(activeDeviceSlug)
+	activeActionName = NormalizeControlAction(activeActionName)
+	kept := device.PendingActionDiscoveryCleanups[:0]
+	removed := false
+	for _, action := range device.PendingActionDiscoveryCleanups {
+		cleanupDeviceSlug := Slug(action.DeviceSlug)
+		if cleanupDeviceSlug == "" {
+			cleanupDeviceSlug = Slug(device.DeviceSlug)
+		}
+		sameDevice := cleanupDeviceSlug == activeDeviceSlug
+		if action.CommandID == commandID && sameDevice && NormalizeControlAction(action.Action) == activeActionName {
+			removed = true
+			continue
+		}
+		kept = append(kept, action)
+	}
+	device.PendingActionDiscoveryCleanups = kept
+	return removed
+}
+
+func (s *Store) deviceSnapshotsLocked(slugs map[string]struct{}) []Device {
+	if len(slugs) == 0 {
+		return nil
+	}
+	ordered := make([]string, 0, len(slugs))
+	for slug := range slugs {
+		ordered = append(ordered, slug)
+	}
+	sort.Strings(ordered)
+	devices := make([]Device, 0, len(ordered))
+	for _, slug := range ordered {
+		if device := s.devices[slug]; device != nil {
+			devices = append(devices, copyDevice(*device))
+		}
+	}
+	return devices
+}
+
+func (s *Store) deviceSnapshotsInPublishOrderLocked(slugs map[string]struct{}) []Device {
+	if len(slugs) == 0 {
+		return nil
+	}
+	ordered := make([]*Device, 0, len(slugs))
+	for slug := range slugs {
+		if device := s.devices[slug]; device != nil {
+			ordered = append(ordered, device)
+		}
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].publishRevision != ordered[j].publishRevision {
+			return ordered[i].publishRevision < ordered[j].publishRevision
+		}
+		return ordered[i].DeviceSlug < ordered[j].DeviceSlug
+	})
+	devices := make([]Device, 0, len(ordered))
+	for _, device := range ordered {
+		devices = append(devices, copyDevice(*device))
+	}
+	return devices
+}
+
+func (s *Store) rehomeResolvedCommandsLocked(resolver IdentityResolver) map[string]struct{} {
+	changedSlugs := make(map[string]struct{})
+	type placement struct {
+		sourceSlug string
+		commandID  string
+		identity   DeviceIdentity
+	}
+	placements := make([]placement, 0)
+	slugs := make([]string, 0, len(s.devices))
+	for slug := range s.devices {
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+	for _, slug := range slugs {
+		device := s.devices[slug]
+		if device == nil {
+			continue
+		}
+		commandIDs := make([]string, 0, len(device.RawCommands))
+		for commandID := range device.RawCommands {
+			commandIDs = append(commandIDs, commandID)
+		}
+		sort.Strings(commandIDs)
+		for _, commandID := range commandIDs {
+			command := device.RawCommands[commandID]
+			event := Event{
+				CommandID:   commandID,
+				LogicalID:   command.LogicalID,
+				GenericType: command.GenericType,
+				ObjectName:  firstNonEmpty(command.ObjectName, device.ObjectName),
+				DeviceName:  firstNonEmpty(command.Device, device.Device),
+				CommandName: firstNonEmpty(command.RawName, command.Name),
+				Name:        firstNonEmpty(command.RawName, command.Name),
+				Type:        command.Type,
+				Subtype:     command.Subtype,
+				Unit:        command.Unit,
+			}
+			mapping := mappingFromCommandContract(command, MappingFor(event))
+			identity := resolver.Resolve(event, mapping)
+			if identity.DeviceSlug != "" && identity.DeviceSlug != slug {
+				placements = append(placements, placement{sourceSlug: slug, commandID: commandID, identity: identity})
+			}
+		}
+	}
+
+	for _, placement := range placements {
+		source := s.devices[placement.sourceSlug]
+		if source == nil {
+			continue
+		}
+		if _, ok := source.RawCommands[placement.commandID]; !ok {
+			continue
+		}
+		target := s.ensureIdentityDeviceLocked(placement.identity, *source)
+		transferred, movedSlugs, ok, _ := s.takeCommandFromOtherOwnersLocked(placement.commandID, target.DeviceSlug)
+		if !ok {
+			continue
+		}
+		for slug := range movedSlugs {
+			changedSlugs[slug] = struct{}{}
+		}
+		changedSlugs[placement.sourceSlug] = struct{}{}
+		changedSlugs[target.DeviceSlug] = struct{}{}
+		if existing, exists := target.RawCommands[placement.commandID]; exists {
+			transferred = commandWithNewestValue(existing, transferred)
+		}
+		transferred.DeviceSlug = target.DeviceSlug
+		transferred.Device = firstNonEmpty(placement.identity.DeviceName, transferred.Device, target.Device)
+		target.RawCommands[placement.commandID] = transferred
+		removePendingCommandCleanup(target, placement.commandID)
+		rebuildMetricValue(target, transferred.Metric)
+		if transferred.LastUpdate.After(target.LastUpdate) {
+			target.LastUpdate = transferred.LastUpdate
+		}
+		if target.JeedomID == "" && transferred.EqLogicID != "" {
+			target.JeedomID = transferred.EqLogicID
+		}
+		s.bumpDevicePublishRevisionLocked(target)
+	}
+	return changedSlugs
+}
+
+func (s *Store) rehomeResolvedActionsLocked(resolver IdentityResolver) map[string]struct{} {
+	changedSlugs := make(map[string]struct{})
+	type placement struct {
+		sourceSlug string
+		actionName string
+		commandID  string
+		identity   DeviceIdentity
+	}
+	placements := make([]placement, 0)
+	slugs := make([]string, 0, len(s.devices))
+	for slug := range s.devices {
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+	for _, slug := range slugs {
+		device := s.devices[slug]
+		if device == nil {
+			continue
+		}
+		actionNames := make([]string, 0, len(device.Actions))
+		for actionName := range device.Actions {
+			actionNames = append(actionNames, actionName)
+		}
+		sort.Strings(actionNames)
+		for _, actionName := range actionNames {
+			action := device.Actions[actionName]
+			if strings.TrimSpace(action.CommandID) == "" {
+				continue
+			}
+			identity := resolver.Resolve(Event{
+				CommandID:   action.CommandID,
+				ObjectName:  device.ObjectName,
+				DeviceName:  firstNonEmpty(action.Device, device.Device),
+				CommandName: firstNonEmpty(action.RawName, action.Name, actionName),
+				Name:        firstNonEmpty(action.RawName, action.Name, actionName),
+				Type:        "action",
+				Subtype:     action.Subtype,
+			}, Mapping{})
+			if identity.DeviceSlug != "" && identity.DeviceSlug != slug {
+				placements = append(placements, placement{
+					sourceSlug: slug,
+					actionName: actionName,
+					commandID:  action.CommandID,
+					identity:   identity,
+				})
+			}
+		}
+	}
+
+	for _, placement := range placements {
+		source := s.devices[placement.sourceSlug]
+		if source == nil {
+			continue
+		}
+		action, ok := source.Actions[placement.actionName]
+		if !ok || action.CommandID != placement.commandID {
+			continue
+		}
+		target := s.ensureIdentityDeviceLocked(placement.identity, *source)
+		actionName := NormalizeControlAction(action.Action)
+		if actionName == "" {
+			actionName = placement.actionName
+		}
+		transferred, movedSlugs, found := s.takeActionFromOtherOwnersLocked(placement.commandID, target.DeviceSlug, actionName)
+		if !found {
+			continue
+		}
+		for slug := range movedSlugs {
+			changedSlugs[slug] = struct{}{}
+		}
+		changedSlugs[placement.sourceSlug] = struct{}{}
+		changedSlugs[target.DeviceSlug] = struct{}{}
+		if existing, exists := target.Actions[actionName]; exists && existing.LastRequestedAt.After(transferred.LastRequestedAt) {
+			transferred.LastRequestedAt = existing.LastRequestedAt
+			transferred.LastRequestSource = existing.LastRequestSource
+		}
+		transferred.Action = actionName
+		transferred.DeviceSlug = target.DeviceSlug
+		transferred.Device = firstNonEmpty(placement.identity.DeviceName, target.Device, transferred.Device)
+		transferred.DeviceType = firstNonEmpty(placement.identity.HAModel, target.JeedomDeviceType, transferred.DeviceType)
+		transferred.Allowed, transferred.DenyReason = controlAllowed(transferred.DeviceType, actionName)
+		target.Actions[actionName] = transferred
+		s.bumpDevicePublishRevisionLocked(target)
+	}
+	return changedSlugs
+}
+
+func actionCollisionStorageKey(actions map[string]Action, actionName, commandID string) string {
+	base := actionName + "__cmd_" + Slug(commandID)
+	if _, exists := actions[base]; !exists {
+		return base
+	}
+	for suffix := 2; ; suffix++ {
+		candidate := fmt.Sprintf("%s_%d", base, suffix)
+		if _, exists := actions[candidate]; !exists {
+			return candidate
+		}
+	}
+}
+
+func (s *Store) resolveActionCollisionsLocked(resolver IdentityResolver) map[string]struct{} {
+	changedSlugs := make(map[string]struct{})
+	type actionCandidate struct {
+		mapKey   string
+		action   Action
+		resolved bool
+	}
+	for slug, device := range s.devices {
+		if device == nil || len(device.Actions) < 2 {
+			continue
+		}
+		groups := make(map[string][]actionCandidate)
+		for mapKey, action := range device.Actions {
+			actionName := NormalizeControlAction(action.Action)
+			if actionName == "" {
+				actionName = NormalizeControlAction(strings.Split(mapKey, "__cmd_")[0])
+			}
+			if actionName == "" {
+				actionName = mapKey
+			}
+			identity := resolver.Resolve(Event{
+				CommandID:   action.CommandID,
+				ObjectName:  device.ObjectName,
+				DeviceName:  firstNonEmpty(action.Device, device.Device),
+				CommandName: firstNonEmpty(action.RawName, action.Name, actionName),
+				Name:        firstNonEmpty(action.RawName, action.Name, actionName),
+				Type:        "action",
+				Subtype:     action.Subtype,
+			}, Mapping{})
+			groups[actionName] = append(groups[actionName], actionCandidate{
+				mapKey:   mapKey,
+				action:   action,
+				resolved: identity.DeviceSlug == slug,
+			})
+		}
+		changed := false
+		for actionName, candidates := range groups {
+			if len(candidates) < 2 {
+				candidate := candidates[0]
+				if candidate.mapKey != actionName {
+					delete(device.Actions, candidate.mapKey)
+					candidate.action.Action = actionName
+					device.Actions[actionName] = actionForDevice(candidate.action, device)
+					changed = true
+				}
+				continue
+			}
+			sort.SliceStable(candidates, func(i, j int) bool {
+				left, right := candidates[i], candidates[j]
+				if left.resolved != right.resolved {
+					return left.resolved
+				}
+				if !left.action.LastRequestedAt.Equal(right.action.LastRequestedAt) {
+					return left.action.LastRequestedAt.After(right.action.LastRequestedAt)
+				}
+				leftProvenance := left.action.EqLogicID != "" && left.action.EqLogicID == device.JeedomID
+				rightProvenance := right.action.EqLogicID != "" && right.action.EqLogicID == device.JeedomID
+				if leftProvenance != rightProvenance {
+					return leftProvenance
+				}
+				return left.action.CommandID < right.action.CommandID
+			})
+			winner := candidates[0].action
+			for _, candidate := range candidates[1:] {
+				if candidate.action.LastRequestedAt.After(winner.LastRequestedAt) {
+					winner.LastRequestedAt = candidate.action.LastRequestedAt
+					winner.LastRequestSource = candidate.action.LastRequestSource
+				}
+			}
+			for _, candidate := range candidates {
+				delete(device.Actions, candidate.mapKey)
+			}
+			winner.Action = actionName
+			device.Actions[actionName] = actionForDevice(winner, device)
+			changed = true
+		}
+		if changed {
+			s.bumpDevicePublishRevisionLocked(device)
+			changedSlugs[slug] = struct{}{}
+		}
+	}
+	return changedSlugs
+}
+
+func (s *Store) removeCanonicalLegacyAliasesLocked() map[string]struct{} {
+	changedSlugs := make(map[string]struct{})
+	canonicalSlugs := make(map[string]struct{})
+	for slug, device := range s.devices {
+		if device == nil || strings.TrimSpace(device.LinkedSource) == "" {
+			continue
+		}
+		canonicalSlugs[Slug(slug)] = struct{}{}
+	}
+	if len(canonicalSlugs) == 0 {
+		return changedSlugs
+	}
+	for slug, device := range s.devices {
+		if device == nil || len(device.LegacyDeviceSlugs) == 0 {
+			continue
+		}
+		kept := device.LegacyDeviceSlugs[:0]
+		changed := false
+		for _, legacySlug := range device.LegacyDeviceSlugs {
+			normalized := Slug(legacySlug)
+			_, canonical := canonicalSlugs[normalized]
+			if canonical && normalized != Slug(slug) {
+				changed = true
+				continue
+			}
+			kept = append(kept, legacySlug)
+		}
+		device.LegacyDeviceSlugs = kept
+		if changed {
+			s.bumpDevicePublishRevisionLocked(device)
+			changedSlugs[slug] = struct{}{}
+		}
+	}
+	return changedSlugs
+}
+
+func (s *Store) ensureIdentityDeviceLocked(identity DeviceIdentity, source Device) *Device {
+	target := s.devices[identity.DeviceSlug]
+	if target == nil {
+		target = &Device{
+			Source:      Source,
+			DeviceSlug:  identity.DeviceSlug,
+			Values:      make(map[string]any),
+			RawCommands: make(map[string]Command),
+			Actions:     make(map[string]Action),
+		}
+		s.devices[identity.DeviceSlug] = target
+	}
+	if target.Values == nil {
+		target.Values = make(map[string]any)
+	}
+	if target.RawCommands == nil {
+		target.RawCommands = make(map[string]Command)
+	}
+	if target.Actions == nil {
+		target.Actions = make(map[string]Action)
+	}
+	target.Source = Source
+	target.DeviceSlug = identity.DeviceSlug
+	target.Device = firstNonEmpty(identity.DeviceName, target.Device, source.Device)
+	target.BaseSlug = firstNonEmpty(identity.BaseSlug, target.BaseSlug)
+	target.ObjectName = firstNonEmpty(target.ObjectName, source.ObjectName)
+	if len(identity.HAIdentifiers) > 0 {
+		target.HAIdentifiers = append([]string(nil), identity.HAIdentifiers...)
+	}
+	target.HAManufacturer = firstNonEmpty(identity.HAManufacturer, target.HAManufacturer, source.HAManufacturer)
+	target.HAModel = firstNonEmpty(identity.HAModel, target.HAModel, source.HAModel)
+	target.SuggestedArea = firstNonEmpty(identity.SuggestedArea, target.SuggestedArea)
+	target.LinkedSource = identity.LinkedSource
+	target.LinkedAccount = identity.LinkedAccount
+	target.LinkedZone = identity.LinkedZone
+	target.DiscoveryDisabled = identity.DiscoveryDisabled
+	target.JeedomDeviceType = firstNonEmpty(identity.HAModel, target.JeedomDeviceType, source.JeedomDeviceType)
+	target.JeedomEnabled = target.JeedomEnabled || source.JeedomEnabled
+	target.JeedomVisible = target.JeedomVisible || source.JeedomVisible
+	return target
+}
+
+func commandWithNewestValue(primary, candidate Command) Command {
+	result := primary
+	if candidate.LastUpdate.After(result.LastUpdate) {
+		result = candidate
+	}
+	primaryState := effectiveCommandState(primary)
+	candidateState := effectiveCommandState(candidate)
+	valueSource := primary
+	selectedState := primaryState
+	if newerCommandState(candidateState, candidate, primaryState, primary) {
+		valueSource = candidate
+		selectedState = candidateState
+	}
+	if selectedState.present {
+		result.Value = selectedState.value
+		result.EmptyValue = selectedState.empty
+	} else {
+		result.Value = valueSource.Value
+		result.EmptyValue = valueSource.EmptyValue
+	}
+	result.LastValueAt = valueSource.LastValueAt
+	return result
+}
+
+func seedDeviceValueFromCommand(device *Device, command *Command, existing Command, mapping Mapping) {
+	if device == nil || command == nil || mapping.Metric == "" {
+		return
+	}
+	if command.Value == nil {
+		if command.EmptyValue {
+			device.Values[mapping.Metric] = nil
+		}
+		return
+	}
+	value := command.Value
+	if existing.Metric != mapping.Metric || existing.Component != mapping.Component {
+		mapped, ok := mappedAnyValue(command.Value, mapping, deviceTypeForNormalization(*device))
+		if !ok {
+			return
+		}
+		value = mapped
+	}
+	command.Value = value
+	device.Values[mapping.Metric] = value
+	applyDerivedValuesFromEventCode(mapping, device, value, command.LastValueAt)
+	applyDerivedWallSwitchStateFromLoad(mapping, device, value)
+	applyDerivedWaterStopState(mapping, device, value)
+}
+
+func (s *Store) deduplicateCommandOwnersLocked() {
+	type commandOwner struct {
+		slug    string
+		mapKey  string
+		command Command
+	}
+	ownersByID := make(map[string][]commandOwner)
+	for slug, device := range s.devices {
+		if device == nil {
+			continue
+		}
+		for mapKey, command := range device.RawCommands {
+			commandID := strings.TrimSpace(command.CommandID)
+			if commandID == "" {
+				continue
+			}
+			ownersByID[commandID] = append(ownersByID[commandID], commandOwner{
+				slug:    slug,
+				mapKey:  mapKey,
+				command: command,
+			})
+		}
+	}
+
+	commandIDs := make([]string, 0, len(ownersByID))
+	for commandID, owners := range ownersByID {
+		if len(owners) > 1 {
+			commandIDs = append(commandIDs, commandID)
+		}
+	}
+	sort.Strings(commandIDs)
+	for _, commandID := range commandIDs {
+		owners := ownersByID[commandID]
+		sort.SliceStable(owners, func(i, j int) bool {
+			left, right := owners[i], owners[j]
+			leftDevice, rightDevice := s.devices[left.slug], s.devices[right.slug]
+			leftProvenance := leftDevice != nil && left.command.EqLogicID != "" && left.command.EqLogicID == leftDevice.JeedomID
+			rightProvenance := rightDevice != nil && right.command.EqLogicID != "" && right.command.EqLogicID == rightDevice.JeedomID
+			if leftProvenance != rightProvenance {
+				return leftProvenance
+			}
+			if !left.command.LastValueAt.Equal(right.command.LastValueAt) {
+				return left.command.LastValueAt.After(right.command.LastValueAt)
+			}
+			if !left.command.LastUpdate.Equal(right.command.LastUpdate) {
+				return left.command.LastUpdate.After(right.command.LastUpdate)
+			}
+			return left.slug < right.slug
+		})
+
+		winner := owners[0]
+		merged := winner.command
+		for _, owner := range owners[1:] {
+			merged = commandWithNewestValue(merged, owner.command)
+		}
+		for slug, device := range s.devices {
+			if device == nil {
+				continue
+			}
+			cleanupRemoved := removePendingCommandCleanup(device, commandID)
+			if cleanupRemoved && slug != winner.slug {
+				s.bumpDevicePublishRevisionLocked(device)
+			}
+		}
+		for _, owner := range owners[1:] {
+			device := s.devices[owner.slug]
+			if device == nil {
+				continue
+			}
+			delete(device.RawCommands, owner.mapKey)
+			rebuildMetricValue(device, owner.command.Metric)
+			s.bumpDevicePublishRevisionLocked(device)
+		}
+
+		target := s.devices[winner.slug]
+		if target == nil {
+			continue
+		}
+		if winner.mapKey != commandID {
+			delete(target.RawCommands, winner.mapKey)
+		}
+		merged.CommandID = commandID
+		merged.DeviceSlug = winner.slug
+		merged.Device = firstNonEmpty(target.Device, merged.Device)
+		target.RawCommands[commandID] = merged
+		rebuildMetricValue(target, merged.Metric)
+		s.bumpDevicePublishRevisionLocked(target)
+	}
 }
 
 func (s *Store) identityFor(evt Event, mapping Mapping) DeviceIdentity {
@@ -726,6 +1592,9 @@ func (s *Store) mergeDeviceIntoIdentityLocked(sourceSlug string, identity Device
 		target.Values[key] = value
 	}
 	for commandID, command := range source.RawCommands {
+		if existing, ok := target.RawCommands[commandID]; ok {
+			command = commandWithNewestValue(existing, command)
+		}
 		command.DeviceSlug = identity.DeviceSlug
 		command.Device = firstNonEmpty(identity.DeviceName, source.Device, command.Device)
 		target.RawCommands[commandID] = command
@@ -734,8 +1603,20 @@ func (s *Store) mergeDeviceIntoIdentityLocked(sourceSlug string, identity Device
 		action.DeviceSlug = identity.DeviceSlug
 		action.Device = firstNonEmpty(identity.DeviceName, source.Device, action.Device)
 		action.DeviceType = firstNonEmpty(identity.HAModel, source.JeedomDeviceType, source.HAModel, action.DeviceType)
+		if existing, ok := target.Actions[actionName]; ok {
+			if existing.CommandID == action.CommandID {
+				if existing.LastRequestedAt.After(action.LastRequestedAt) {
+					action.LastRequestedAt = existing.LastRequestedAt
+					action.LastRequestSource = existing.LastRequestSource
+				}
+				target.Actions[actionName] = action
+				continue
+			}
+			actionName = actionCollisionStorageKey(target.Actions, actionName, action.CommandID)
+		}
 		target.Actions[actionName] = action
 	}
+	rebuildAllMetricValuesPreservingOptimisticState(target)
 	queueCommandCleanups(target, source.PendingDiscoveryCleanups)
 	queueActionCleanups(target, source.PendingActionDiscoveryCleanups)
 
@@ -762,7 +1643,7 @@ func (s *Store) mergeDeviceIntoIdentityLocked(sourceSlug string, identity Device
 	target.DiscoveryDisabled = identity.DiscoveryDisabled
 	target.JeedomID = firstNonEmpty(source.JeedomID, target.JeedomID)
 	target.JeedomLogicalID = firstNonEmpty(source.JeedomLogicalID, target.JeedomLogicalID)
-	target.JeedomDeviceType = firstNonEmpty(source.JeedomDeviceType, identity.HAModel, target.JeedomDeviceType)
+	target.JeedomDeviceType = firstNonEmpty(identity.HAModel, source.JeedomDeviceType, target.JeedomDeviceType)
 	target.JeedomEnabled = source.JeedomEnabled || target.JeedomEnabled
 	target.JeedomVisible = source.JeedomVisible || target.JeedomVisible
 
@@ -968,6 +1849,269 @@ func deleteUnreferencedMetric(device *Device, metric string) {
 	delete(device.Values, metric)
 }
 
+type commandState struct {
+	value      any
+	empty      bool
+	observedAt time.Time
+	present    bool
+}
+
+func effectiveCommandState(command Command) commandState {
+	if command.Value == nil {
+		if !command.EmptyValue {
+			return commandState{}
+		}
+		observedAt := command.LastUpdate
+		if observedAt.IsZero() {
+			observedAt = command.LastValueAt
+		}
+		return commandState{value: nil, empty: true, observedAt: observedAt, present: true}
+	}
+	observedAt := command.LastValueAt
+	if observedAt.IsZero() {
+		observedAt = command.LastUpdate
+	}
+	return commandState{value: command.Value, empty: command.EmptyValue, observedAt: observedAt, present: true}
+}
+
+func newerCommandState(candidate commandState, candidateCommand Command, current commandState, currentCommand Command) bool {
+	if !current.present {
+		return candidate.present
+	}
+	if !candidate.present {
+		return false
+	}
+	if !candidate.observedAt.Equal(current.observedAt) {
+		return candidate.observedAt.After(current.observedAt)
+	}
+	if !candidateCommand.LastUpdate.Equal(currentCommand.LastUpdate) {
+		return candidateCommand.LastUpdate.After(currentCommand.LastUpdate)
+	}
+	if candidate.empty != current.empty {
+		return candidate.empty
+	}
+	return candidateCommand.CommandID < currentCommand.CommandID
+}
+
+func rebuildMetricValue(device *Device, metric string) {
+	if device == nil || strings.TrimSpace(metric) == "" {
+		return
+	}
+	if device.Values == nil {
+		device.Values = make(map[string]any)
+	}
+	var selected commandState
+	var selectedCommand Command
+	for _, command := range device.RawCommands {
+		if command.Metric != metric {
+			continue
+		}
+		candidate := effectiveCommandState(command)
+		if newerCommandState(candidate, command, selected, selectedCommand) {
+			selected = candidate
+			selectedCommand = command
+		}
+	}
+	if selected.present {
+		device.Values[metric] = selected.value
+	} else {
+		delete(device.Values, metric)
+	}
+	rebuildDerivedValuesForMetricChange(device, metric)
+}
+
+func rebuildAllMetricValues(device *Device) {
+	if device == nil {
+		return
+	}
+	metrics := make(map[string]struct{}, len(device.RawCommands))
+	for _, command := range device.RawCommands {
+		if command.Metric != "" {
+			metrics[command.Metric] = struct{}{}
+		}
+	}
+	ordered := make([]string, 0, len(metrics))
+	for metric := range metrics {
+		ordered = append(ordered, metric)
+	}
+	sort.Strings(ordered)
+	for _, metric := range ordered {
+		rebuildMetricValue(device, metric)
+	}
+}
+
+// rebuildAllMetricValuesPreservingOptimisticState refreshes values restored
+// from command state without discarding the last successful control request
+// for action-only toggle devices. Those devices intentionally have no info
+// command from which their state can be reconstructed after a restart.
+func rebuildAllMetricValuesPreservingOptimisticState(device *Device) {
+	if device == nil {
+		return
+	}
+	optimisticState, hadOptimisticState := device.Values["state"]
+	preserveOptimisticState := hadOptimisticState && hasActionOnlyToggleControl(device) && !hasObservedStateCommand(device)
+	rebuildAllMetricValues(device)
+	if preserveOptimisticState {
+		device.Values["state"] = optimisticState
+	}
+}
+
+func hasActionOnlyToggleControl(device *Device) bool {
+	if device == nil || !toggleCapableDevice(*device) {
+		return false
+	}
+	for _, action := range device.Actions {
+		if strings.TrimSpace(action.StateCommandID) != "" {
+			continue
+		}
+		switch NormalizeControlAction(action.Action) {
+		case "on", "off":
+			return true
+		}
+	}
+	return false
+}
+
+func hasObservedStateCommand(device *Device) bool {
+	if device == nil {
+		return false
+	}
+	for _, command := range device.RawCommands {
+		if command.Metric == "state" && effectiveCommandState(command).present {
+			return true
+		}
+	}
+	return false
+}
+
+func rebuildDerivedValuesForMetricChange(device *Device, metric string) {
+	if device == nil {
+		return
+	}
+	rebuildState := metric == "state" ||
+		(metric == "event_code" && (isWallSwitchDevice(*device) || isWaterStopDevice(*device))) ||
+		((metric == "current_a" || metric == "power_w") && isWallSwitchDevice(*device)) ||
+		(metric == "valve_position" && isWaterStopDevice(*device))
+	rebuildGridPower := metric == "grid_power" ||
+		(metric == "event_code" && isTransmitterDevice(*device))
+	if !rebuildState && !rebuildGridPower {
+		return
+	}
+	if device.Values == nil {
+		device.Values = make(map[string]any)
+	}
+	if rebuildGridPower {
+		for key, command := range device.RawCommands {
+			if command.CommandID == "" && command.Metric == "grid_power" {
+				delete(device.RawCommands, key)
+			}
+		}
+	}
+
+	commands := make([]Command, 0, len(device.RawCommands))
+	for _, command := range device.RawCommands {
+		commands = append(commands, command)
+	}
+	sort.SliceStable(commands, func(i, j int) bool {
+		left, right := commands[i], commands[j]
+		leftState, rightState := effectiveCommandState(left), effectiveCommandState(right)
+		leftAt, rightAt := leftState.observedAt, rightState.observedAt
+		if !leftState.present {
+			leftAt = left.LastUpdate
+		}
+		if !rightState.present {
+			rightAt = right.LastUpdate
+		}
+		if !leftAt.Equal(rightAt) {
+			return leftAt.Before(rightAt)
+		}
+		if !left.LastUpdate.Equal(right.LastUpdate) {
+			return left.LastUpdate.Before(right.LastUpdate)
+		}
+		if leftState.empty != rightState.empty {
+			return !leftState.empty
+		}
+		// rebuildMetricValue selects the lexicographically smaller command ID
+		// on an otherwise exact tie, so process it last here as well.
+		return left.CommandID > right.CommandID
+	})
+
+	var state any
+	stateFound := false
+	gridPower := false
+	gridPowerFound := false
+	gridPowerAt := time.Time{}
+	for _, command := range commands {
+		event := Event{
+			CommandID:   command.CommandID,
+			LogicalID:   command.LogicalID,
+			GenericType: command.GenericType,
+			ObjectName:  command.ObjectName,
+			DeviceName:  command.Device,
+			CommandName: firstNonEmpty(command.RawName, command.Name),
+			Name:        firstNonEmpty(command.RawName, command.Name),
+			Type:        command.Type,
+			Subtype:     command.Subtype,
+			Unit:        command.Unit,
+		}
+		mapping := mappingFromCommandContract(command, MappingFor(event))
+		if rebuildState {
+			if mapping.Metric == "state" && (command.Value != nil || command.EmptyValue) {
+				state = command.Value
+				stateFound = true
+			}
+			if derived, ok := derivedStateFromEventCode(mapping, *device, command.Value); ok {
+				state = derived
+				stateFound = true
+			}
+			if isWallSwitchDevice(*device) && (mapping.Metric == "current_a" || mapping.Metric == "power_w") {
+				if load, ok := numericValue(command.Value); ok && load > 0 {
+					state = true
+					stateFound = true
+				}
+			}
+			if isWaterStopDevice(*device) && mapping.Metric == "valve_position" {
+				switch strings.ToUpper(strings.TrimSpace(fmt.Sprint(command.Value))) {
+				case "OPEN", "OPENED":
+					state = true
+					stateFound = true
+				case "CLOSED", "CLOSE":
+					state = false
+					stateFound = true
+				case "INTERMEDIATE", "OPENING", "CLOSING", "MOVING":
+					state = nil
+					stateFound = true
+				}
+			}
+		}
+		if rebuildGridPower {
+			if derived, ok := derivedGridPowerFromEventCode(mapping, *device, command.Value); ok {
+				gridPower = derived
+				gridPowerFound = true
+				gridPowerAt = command.LastValueAt
+				if gridPowerAt.IsZero() {
+					gridPowerAt = command.LastUpdate
+				}
+			}
+		}
+	}
+	if rebuildState {
+		if stateFound {
+			device.Values["state"] = state
+		} else {
+			delete(device.Values, "state")
+		}
+	}
+	if rebuildGridPower {
+		if gridPowerFound {
+			device.Values["grid_power"] = gridPower
+			ensureSyntheticGridPowerCommand(device, gridPower, gridPowerAt)
+		} else {
+			delete(device.Values, "grid_power")
+		}
+	}
+}
+
 func queueCommandCleanups(device *Device, commands []Command) {
 	if device == nil || len(commands) == 0 {
 		return
@@ -1000,24 +2144,32 @@ func queueActionCleanups(device *Device, actions []Action) {
 	}
 	byID := make(map[string]Action, len(device.PendingActionDiscoveryCleanups)+len(actions))
 	for _, action := range device.PendingActionDiscoveryCleanups {
-		if action.CommandID != "" {
-			byID[action.CommandID] = action
+		if key := actionCleanupKey(action); key != "" {
+			byID[key] = action
 		}
 	}
 	for _, action := range actions {
-		if action.CommandID != "" {
-			byID[action.CommandID] = action
+		if key := actionCleanupKey(action); key != "" {
+			byID[key] = action
 		}
 	}
 	ids := make([]string, 0, len(byID))
-	for commandID := range byID {
-		ids = append(ids, commandID)
+	for key := range byID {
+		ids = append(ids, key)
 	}
 	sort.Strings(ids)
 	device.PendingActionDiscoveryCleanups = make([]Action, 0, len(ids))
-	for _, commandID := range ids {
-		device.PendingActionDiscoveryCleanups = append(device.PendingActionDiscoveryCleanups, byID[commandID])
+	for _, key := range ids {
+		device.PendingActionDiscoveryCleanups = append(device.PendingActionDiscoveryCleanups, byID[key])
 	}
+}
+
+func actionCleanupKey(action Action) string {
+	commandID := strings.TrimSpace(action.CommandID)
+	if commandID == "" {
+		return ""
+	}
+	return commandID + "\x00" + Slug(action.DeviceSlug) + "\x00" + NormalizeControlAction(action.Action)
 }
 
 // discoveryReplacesCommand identifies pre-provenance cache entries that have
@@ -1380,8 +2532,8 @@ func (s *Store) AcknowledgeActionCleanups(actions []Action) bool {
 	}
 	acknowledged := make(map[string]struct{}, len(actions))
 	for _, action := range actions {
-		if action.CommandID != "" {
-			acknowledged[action.CommandID] = struct{}{}
+		if key := actionCleanupKey(action); key != "" {
+			acknowledged[key] = struct{}{}
 		}
 	}
 	if len(acknowledged) == 0 {
@@ -1397,7 +2549,7 @@ func (s *Store) AcknowledgeActionCleanups(actions []Action) bool {
 		}
 		kept := device.PendingActionDiscoveryCleanups[:0]
 		for _, pending := range device.PendingActionDiscoveryCleanups {
-			if _, ok := acknowledged[pending.CommandID]; ok {
+			if _, ok := acknowledged[actionCleanupKey(pending)]; ok {
 				changed = true
 				continue
 			}
@@ -1506,17 +2658,59 @@ func (s *Store) ActionByCommandID(commandID string) (Action, bool) {
 	if commandID == "" {
 		return Action{}, false
 	}
+	type candidate struct {
+		device *Device
+		action Action
+	}
+	candidates := make([]candidate, 0)
 	for _, device := range s.devices {
 		if device == nil {
 			continue
 		}
 		for _, action := range device.Actions {
 			if action.CommandID == commandID {
-				return action, true
+				candidates = append(candidates, candidate{device: device, action: actionForDevice(action, device)})
 			}
 		}
 	}
-	return Action{}, false
+	if len(candidates) == 0 {
+		return Action{}, false
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		left, right := candidates[i], candidates[j]
+		leftLegacy := s.isLegacyActionSourceLocked(left.device.DeviceSlug, commandID)
+		rightLegacy := s.isLegacyActionSourceLocked(right.device.DeviceSlug, commandID)
+		if leftLegacy != rightLegacy {
+			return !leftLegacy
+		}
+		leftLinked := strings.EqualFold(left.device.LinkedSource, "sia")
+		rightLinked := strings.EqualFold(right.device.LinkedSource, "sia")
+		if leftLinked != rightLinked {
+			return leftLinked
+		}
+		if left.device.DiscoveryDisabled != right.device.DiscoveryDisabled {
+			return !left.device.DiscoveryDisabled
+		}
+		if left.device.publishRevision != right.device.publishRevision {
+			return left.device.publishRevision > right.device.publishRevision
+		}
+		return left.device.DeviceSlug < right.device.DeviceSlug
+	})
+	return candidates[0].action, true
+}
+
+func (s *Store) isLegacyActionSourceLocked(deviceSlug, commandID string) bool {
+	for _, device := range s.devices {
+		if device == nil || !containsString(device.LegacyDeviceSlugs, deviceSlug) {
+			continue
+		}
+		for _, action := range device.Actions {
+			if action.CommandID == commandID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Store) RecordControl(action Action, source, topic string, err error) {

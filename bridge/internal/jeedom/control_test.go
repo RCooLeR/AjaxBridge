@@ -2,11 +2,13 @@ package jeedom
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/RCooLeR/AjaxBridge/internal/devicecatalog"
 	"github.com/rs/zerolog"
 )
 
@@ -151,6 +153,9 @@ func TestControllerPersistsActionOnlyWallSwitchStateAcrossRestart(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The application always reconciles the loaded cache against a non-nil
+	// catalog resolver before publishing restored state.
+	restarted.ReconcileResolver(NewCatalogResolver(devicecatalog.Empty(), CatalogResolverConfig{}))
 	restored, ok := restarted.Device("grid_load")
 	if !ok || restored.Values["state"] != true {
 		t.Fatalf("restored WallSwitch = %#v, want state=true", restored)
@@ -167,6 +172,56 @@ func TestControllerPersistsActionOnlyWallSwitchStateAcrossRestart(t *testing.T) 
 	restored, ok = restartedAgain.Device("grid_load")
 	if !ok || restored.Values["state"] != false {
 		t.Fatalf("restored WallSwitch = %#v, want state=false", restored)
+	}
+}
+
+func TestControllerRestoresNewerOptimisticStateOverOlderLoadSample(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jeedom.json")
+	store, err := LoadStore(t.Context(), path, "keep_last", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := ParseDiscoveryMessage("jeedom/discovery/eqLogic/26", []byte(wallSwitchDiscoveryPayload), time.Unix(100, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.ApplyDiscovery(discovery)
+	loadResult := store.Apply(Event{
+		CommandID:   "346",
+		DeviceName:  "Grid load",
+		CommandName: "Puissance",
+		LogicalID:   "powerWTh",
+		Type:        "info",
+		Subtype:     "numeric",
+		Unit:        "W",
+		Value:       json.RawMessage(`10`),
+		ReceivedAt:  time.Unix(200, 0),
+	})
+	if loadResult.Device.Values["state"] != true {
+		t.Fatalf("load-derived state = %#v, want true", loadResult.Device.Values["state"])
+	}
+
+	controller := NewController(ControllerConfig{Enabled: true}, store, &fakeCommandPublisher{}, zerolog.Nop())
+	if _, err := controller.Execute(t.Context(), "grid_load", "OFF", "test"); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := LoadStore(t.Context(), path, "keep_last", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, ok := restarted.Device("grid_load")
+	if !ok || loaded.Values["state"] != false {
+		t.Fatalf("loaded WallSwitch = %#v, want persisted optimistic state=false before reconciliation", loaded)
+	}
+	restarted.ReconcileResolver(NewCatalogResolver(devicecatalog.Empty(), CatalogResolverConfig{}))
+	restored, ok := restarted.Device("grid_load")
+	if !ok || restored.Values["state"] != false {
+		t.Fatalf("restored WallSwitch = %#v, want newer optimistic state=false", restored)
+	}
+	discovery.ReceivedAt = time.Unix(300, 0)
+	refreshed := restarted.ApplyDiscovery(discovery).Device
+	if refreshed.Values["state"] != false {
+		t.Fatalf("state after retained discovery = %#v, want newer optimistic state=false", refreshed.Values["state"])
 	}
 }
 
