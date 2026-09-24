@@ -185,7 +185,7 @@ When a Jeedom device is linked by `jeedom_names` or `jeedom_command_ids`, its en
 
 This is the duplicate-prevention rule. Home Assistant sees SIA alarm/trouble entities, Jeedom metrics, and optional Jeedom control entities as entities of the same physical device.
 
-For linked devices, SIA-owned security/status values stay authoritative. Jeedom commands that duplicate SIA concepts such as tamper, bypass, external power, fire, smoke, water leak, and hardware/connectivity trouble are cleaned from Home Assistant discovery and are not rediscovered. Jeedom still publishes its normalized state JSON for debugging and notifications, and Home Assistant still gets Jeedom-only measurements such as `temperature_c`, `power_w`, `current_a`, `voltage_v`, and `energy_kwh`.
+For linked devices, SIA-owned security/status values stay authoritative. Jeedom commands that duplicate SIA concepts such as tamper, bypass, external power, fire, smoke, water leak, and hardware/connectivity trouble are cleaned from Home Assistant discovery and are not rediscovered. The normalized base alarms `smoke_alarm`, `heat_alarm`, and `carbon_monoxide_alarm` follow that rule; richer Jeedom-only detail such as `rapid_temperature_rise_alarm`, `critical_smoke_alarm`, and `critical_carbon_monoxide_alarm` remains discoverable. Jeedom still publishes its normalized state JSON for debugging and notifications, and Home Assistant still gets Jeedom-only measurements such as `temperature_c`, `humidity_percent`, `co2_ppm`, `power_w`, `current_a`, `voltage_v`, and `energy_kwh`.
 
 ### Jeedom Unlinked Device
 

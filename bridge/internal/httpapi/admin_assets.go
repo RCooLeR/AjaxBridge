@@ -17,6 +17,22 @@ const adminHTML = `<!doctype html>
     .status-off { background: #adb5bd; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .small-table td, .small-table th { font-size: .875rem; }
+    .matching-summary .badge { font-size: .8rem; font-weight: 500; }
+    .jeedom-command-list { min-width: 760px; }
+    .jeedom-command-row {
+      display: grid;
+      grid-template-columns: minmax(4.5rem, .55fr) minmax(8rem, 1fr) minmax(9rem, 1.1fr) minmax(7rem, .8fr) minmax(12rem, 1.5fr);
+      gap: .5rem;
+      align-items: start;
+      padding: .4rem .25rem;
+      border-bottom: 1px solid var(--bs-border-color);
+    }
+    .jeedom-command-row:last-child { border-bottom: 0; }
+    .jeedom-command-head { color: var(--bs-secondary-color); font-size: .72rem; font-weight: 600; text-transform: uppercase; }
+    .jeedom-command-cell { min-width: 0; overflow-wrap: anywhere; }
+    .jeedom-command-cell small { display: block; color: var(--bs-secondary-color); }
+    .command-badges { display: flex; flex-wrap: wrap; gap: .2rem; margin-top: .2rem; }
+    .command-badges .badge { font-size: .65rem; font-weight: 500; }
   </style>
 </head>
 <body>
@@ -66,8 +82,9 @@ const adminHTML = `<!doctype html>
       </section>
 
       <section class="tab-pane fade" id="matchingTab">
+        <div id="matchingSummary" class="matching-summary d-flex flex-wrap gap-2 mb-3" aria-live="polite"></div>
         <div class="row g-3">
-          <div class="col-12 col-xl-6">
+          <div class="col-12">
             <h2 class="h5">SIA Devices</h2>
             <div class="table-responsive">
               <table class="table table-sm small-table" id="siaTable">
@@ -76,7 +93,7 @@ const adminHTML = `<!doctype html>
               </table>
             </div>
           </div>
-          <div class="col-12 col-xl-6">
+          <div class="col-12">
             <h2 class="h5">Jeedom Devices</h2>
             <div class="table-responsive">
               <table class="table table-sm small-table" id="jeedomTable">
@@ -169,6 +186,14 @@ const adminHTML = `<!doctype html>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     let model = null;
+    const CORE_NOTIFICATION_METRICS = [
+      'temperature_c', 'humidity_percent', 'co2_ppm', 'voltage_v', 'power_w', 'current_a', 'energy_kwh',
+      'state', 'status', 'issue_count', 'alarm', 'alarm_active', 'valve', 'valve_position',
+      'smoke_alarm', 'critical_smoke_alarm', 'heat_alarm', 'rapid_temperature_rise_alarm',
+      'carbon_monoxide_alarm', 'critical_carbon_monoxide_alarm',
+      'battery_percent', 'battery_state', 'battery_low', 'online', 'external_power', 'signal_dbm', 'signal_level',
+      'firmware_version', 'operating_mode', 'operating_state', 'battery_check_status', 'device_last_update'
+    ];
 
     function esc(value) {
       return String(value ?? '').replace(/[&<>"']/g, function(ch) {
@@ -267,24 +292,202 @@ const adminHTML = `<!doctype html>
         const name = catalog.name || account.name || ('Ajax account ' + account.account);
         const kind = catalog.kind || 'Hub';
         const commands = csv(catalog.jeedom_command_ids || []);
-        const accountArg = JSON.stringify(account.account);
         const action = catalog.exists
-          ? '<button class="btn btn-outline-secondary btn-sm" onclick=\'focusCatalogRow(' + accountArg + ', "")\'>Edit</button>'
-          : '<button class="btn btn-outline-primary btn-sm" onclick=\'addAccountCatalogRow(' + accountArg + ')\'>Add match row</button>';
+          ? '<button class="btn btn-outline-secondary btn-sm" data-account="' + esc(account.account) + '" onclick="focusCatalogRow(this.dataset.account, \'\')">Edit</button>'
+          : '<button class="btn btn-outline-primary btn-sm" data-account="' + esc(account.account) + '" onclick="addAccountCatalogRow(this.dataset.account)">Add match row</button>';
         sia.insertAdjacentHTML('beforeend', '<tr class="table-primary"><td class="mono">' + esc(key) + '</td><td>' + esc(name) + '</td><td>' + esc(catalog.room || '') + '</td><td>' + esc(kind) + '</td><td class="mono">' + esc(commands) + '<div class="mt-1">' + action + '</div></td></tr>');
       });
       (model.devices || []).forEach(function(device) {
         if (!device.zone && isAccountCatalogDevice(device)) return;
         const key = device.account + ' / zone ' + device.zone;
-        sia.insertAdjacentHTML('beforeend', '<tr><td class="mono">' + esc(key) + '</td><td>' + esc(device.name) + '</td><td>' + esc(device.room) + '</td><td>' + esc(device.kind) + '</td><td class="mono">' + esc(csv(device.jeedom_command_ids)) + '</td></tr>');
+        const action = '<button class="btn btn-outline-secondary btn-sm mt-1" data-account="' + esc(device.account) + '" data-zone="' + esc(device.zone) + '" onclick="focusCatalogRow(this.dataset.account, this.dataset.zone)">Edit</button>';
+        sia.insertAdjacentHTML('beforeend', '<tr><td class="mono">' + esc(key) + '</td><td>' + esc(device.name) + '</td><td>' + esc(device.room) + '</td><td>' + esc(device.kind) + '</td><td class="mono">' + esc(csv(device.jeedom_command_ids)) + '<div>' + action + '</div></td></tr>');
       });
+
       const jeedom = document.querySelector('#jeedomTable tbody');
       jeedom.innerHTML = '';
-      (model.jeedom_devices || []).forEach(function(device) {
-        const commands = Object.values(device.raw_commands || {}).map(function(cmd) { return cmd.command_id + ':' + cmd.name; }).join(', ');
-        const linked = device.linked_account ? (device.linked_zone ? (device.linked_account + ' / zone ' + device.linked_zone) : ('Account ' + device.linked_account)) : '';
-        jeedom.insertAdjacentHTML('beforeend', '<tr><td class="mono">' + esc(device.device_slug) + '</td><td>' + esc(device.device) + '</td><td>' + esc(device.jeedom_device_type || device.ha_model || '') + '</td><td class="mono">' + esc(linked) + '</td><td class="mono">' + esc(commands) + '</td></tr>');
+      const devices = model.jeedom_devices || [];
+      let linkedDevices = 0;
+      let commandTotal = 0;
+      let numericCommandTotal = 0;
+      let diagnosticTotal = 0;
+      devices.forEach(function(device) {
+        const commands = commandsForDevice(device);
+        const linked = !!String(device.linked_account || '').trim();
+        const linkedLabel = linked
+          ? (device.linked_zone ? (device.linked_account + ' / zone ' + device.linked_zone) : ('Account ' + device.linked_account))
+          : 'Not linked to SIA';
+        const numericIDs = numericCommandIDs(device);
+        const mergeDisabled = numericIDs.length === 0 ? ' disabled title="No current numeric command IDs"' : '';
+        const mergeAction = linked
+          ? '<button class="btn btn-outline-primary btn-sm mt-2" data-device-slug="' + esc(device.device_slug) + '" onclick="mergeJeedomCommandIDs(this.dataset.deviceSlug)"' + mergeDisabled + '>Merge ' + numericIDs.length + ' numeric IDs</button>'
+          : '';
+        const linkBadge = linked
+          ? '<span class="badge text-bg-success">Linked</span>'
+          : '<span class="badge text-bg-warning">Unlinked</span>';
+
+        linkedDevices += linked ? 1 : 0;
+        commandTotal += commands.length;
+        numericCommandTotal += numericIDs.length;
+        diagnosticTotal += commands.filter(function(command) { return command.entity_category === 'diagnostic'; }).length;
+
+        jeedom.insertAdjacentHTML('beforeend',
+          '<tr><td class="mono">' + esc(device.device_slug) + '</td>' +
+          '<td>' + esc(device.device) + '</td>' +
+          '<td>' + esc(device.jeedom_device_type || device.ha_model || '') + '</td>' +
+          '<td><div class="mono">' + esc(linkedLabel) + '</div><div class="mt-1">' + linkBadge + '</div>' + mergeAction + '</td>' +
+          '<td>' + renderJeedomCommandRows(device, commands, linked) + '</td></tr>');
       });
+
+      const summary = document.getElementById('matchingSummary');
+      summary.innerHTML =
+        '<span class="badge text-bg-secondary">' + devices.length + ' Jeedom devices</span>' +
+        '<span class="badge text-bg-success">' + linkedDevices + ' linked</span>' +
+        '<span class="badge text-bg-warning">' + (devices.length - linkedDevices) + ' unlinked</span>' +
+        '<span class="badge text-bg-primary">' + commandTotal + ' commands</span>' +
+        '<span class="badge text-bg-info">' + numericCommandTotal + ' numeric IDs</span>' +
+        '<span class="badge text-bg-light border text-dark">' + diagnosticTotal + ' diagnostic</span>';
+    }
+
+    function commandsForDevice(device) {
+      const byID = {};
+      Object.entries(device.raw_commands || {}).forEach(function(entry) {
+        const command = Object.assign({}, entry[1] || {});
+        const commandID = String(command.command_id || entry[0] || '').trim();
+        if (!commandID) return;
+        command.command_id = commandID;
+        byID[commandID] = command;
+      });
+      (model.jeedom_commands || []).forEach(function(command) {
+        if (command.device_slug !== device.device_slug) return;
+        const commandID = String(command.command_id || '').trim();
+        if (!commandID) return;
+        byID[commandID] = Object.assign({}, command, byID[commandID] || {});
+      });
+      (model.jeedom_actions || []).forEach(function(action) {
+        if (action.device_slug !== device.device_slug) return;
+        const commandID = String(action.command_id || '').trim();
+        if (!commandID) return;
+        byID[commandID] = {
+          command_id: commandID,
+          metric: action.action ? ('control_' + action.action) : '',
+          component: 'action',
+          name: action.name || action.action || 'Action',
+          raw_name: action.raw_name || '',
+          type: 'action',
+          subtype: action.subtype || '',
+          value: action.allowed ? 'allowed' : 'blocked',
+          is_action: true,
+          allowed: !!action.allowed
+        };
+      });
+      return Object.values(byID).sort(function(left, right) {
+        return compareCommandIDs(left.command_id, right.command_id);
+      });
+    }
+
+    function compareCommandIDs(left, right) {
+      const leftID = String(left || '');
+      const rightID = String(right || '');
+      const leftNumeric = isNumericCommandID(leftID);
+      const rightNumeric = isNumericCommandID(rightID);
+      if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+      return leftID.localeCompare(rightID, undefined, {numeric:true, sensitivity:'base'});
+    }
+
+    function isNumericCommandID(commandID) {
+      return /^\d+$/.test(String(commandID || '').trim());
+    }
+
+    function numericCommandIDs(device) {
+      return commandsForDevice(device)
+        .map(function(command) { return String(command.command_id || '').trim(); })
+        .filter(isNumericCommandID)
+        .filter(function(commandID, index, values) { return values.indexOf(commandID) === index; })
+        .sort(compareCommandIDs);
+    }
+
+    function renderJeedomCommandRows(device, commands, linked) {
+      if (commands.length === 0) {
+        return '<span class="text-body-secondary">No current commands</span>';
+      }
+      const header =
+        '<div class="jeedom-command-row jeedom-command-head">' +
+        '<div>ID</div><div>Canonical metric</div><div>HA component / class</div><div>Current value</div><div>Name / raw</div></div>';
+      const rows = commands.map(function(command) {
+        const commandID = String(command.command_id || '').trim();
+        const badges = [];
+        if (command.entity_category === 'diagnostic') badges.push('<span class="badge text-bg-secondary">Diagnostic</span>');
+        if (command.is_action) badges.push('<span class="badge text-bg-primary">Control action</span>');
+        if (command.is_action && !command.allowed) badges.push('<span class="badge text-bg-danger">Blocked</span>');
+        if (!linked) badges.push('<span class="badge text-bg-warning">Unlinked</span>');
+        if (!isNumericCommandID(commandID)) badges.push('<span class="badge text-bg-light border text-dark">Synthetic ID</span>');
+        if (!command.metric || !command.component) badges.push('<span class="badge text-bg-danger">Unmapped</span>');
+        if (command.visible) badges.push('<span class="badge text-bg-info">Visible</span>');
+        if (command.historized) badges.push('<span class="badge text-bg-primary">Historized</span>');
+
+        const component = command.component || 'Unmapped';
+        const deviceClass = command.device_class || '—';
+        const type = [command.type, command.subtype].filter(Boolean).join(' / ') || '—';
+        const rawName = command.raw_name || '—';
+        return '<div class="jeedom-command-row">' +
+          '<div class="jeedom-command-cell mono">' + esc(commandID || '—') + '</div>' +
+          '<div class="jeedom-command-cell"><span class="mono">' + esc(command.metric || '—') + '</span></div>' +
+          '<div class="jeedom-command-cell"><span class="mono">' + esc(component) + '</span><small>Device class: ' + esc(deviceClass) + '</small></div>' +
+          '<div class="jeedom-command-cell">' + formatCommandValue(device, command) + '</div>' +
+          '<div class="jeedom-command-cell"><strong>' + esc(command.name || 'Unnamed') + '</strong><small>Raw: ' + esc(rawName) + '</small><small>Type: ' + esc(type) + '</small><div class="command-badges">' + badges.join('') + '</div></div>' +
+          '</div>';
+      }).join('');
+      return '<div class="jeedom-command-list">' + header + rows + '</div>';
+    }
+
+    function formatCommandValue(device, command) {
+      let value = command.value;
+      if ((value === null || value === undefined) && command.metric && device.values && Object.prototype.hasOwnProperty.call(device.values, command.metric)) {
+        value = device.values[command.metric];
+      }
+      if (value === null || value === undefined || value === '') {
+        return '<span class="text-body-secondary">No value</span>';
+      }
+      if (typeof value === 'object') value = JSON.stringify(value);
+      return '<strong>' + esc(value) + '</strong>' + (command.unit ? ' <span class="text-body-secondary">' + esc(command.unit) + '</span>' : '');
+    }
+
+    function mergeJeedomCommandIDs(deviceSlug) {
+      const device = (model.jeedom_devices || []).find(function(candidate) { return candidate.device_slug === deviceSlug; });
+      if (!device || !String(device.linked_account || '').trim()) {
+        return alertMsg('danger', 'This Jeedom device is not linked to a SIA catalog row.');
+      }
+
+      // Catalog edits live in the form until Save is pressed. Capture them
+      // before re-rendering so merging IDs never discards unsaved changes.
+      model.devices = collectDevices();
+      const account = String(device.linked_account || '').trim();
+      const zone = String(device.linked_zone || '').trim();
+      const catalogDevice = (model.devices || []).find(function(candidate) {
+        return String(candidate.account || '').trim() === account && String(candidate.zone || '').trim() === zone;
+      });
+      if (!catalogDevice) {
+        return alertMsg('danger', 'No Device Catalog row matches account ' + account + (zone ? ' / zone ' + zone : '') + '.');
+      }
+
+      const currentIDs = numericCommandIDs(device);
+      if (currentIDs.length === 0) {
+        return alertMsg('warning', 'No current numeric Jeedom command IDs were found for ' + (device.device || deviceSlug) + '.');
+      }
+      const previousIDs = (catalogDevice.jeedom_command_ids || []).map(function(commandID) { return String(commandID || '').trim(); }).filter(Boolean);
+      const mergedIDs = previousIDs.concat(currentIDs)
+        .filter(isNumericCommandID)
+        .filter(function(commandID, index, values) { return values.indexOf(commandID) === index; })
+        .sort(compareCommandIDs);
+      const added = mergedIDs.filter(function(commandID) { return previousIDs.indexOf(commandID) === -1; }).length;
+      const ignored = previousIDs.filter(function(commandID) { return !isNumericCommandID(commandID); }).length;
+      catalogDevice.jeedom_command_ids = mergedIDs;
+
+      renderDevices();
+      renderMatching();
+      focusCatalogRow(account, zone);
+      alertMsg('info', 'Catalog row now contains ' + mergedIDs.length + ' numeric Jeedom command IDs (' + added + ' added' + (ignored ? ', ' + ignored + ' nonnumeric ignored' : '') + '). Press Save catalog to persist.');
     }
 
     function accountRows() {
@@ -395,7 +598,7 @@ const adminHTML = `<!doctype html>
         '<td><input class="form-check-input" type="checkbox" data-field="enabled" ' + (rule.enabled ? 'checked' : '') + '></td>' +
         '<td><input class="form-control form-control-sm" data-field="name" value="' + esc(rule.name) + '"></td>' +
         '<td><select class="form-select form-select-sm" data-field="device_slug">' + deviceOptions(rule.device_slug) + '</select></td>' +
-        '<td><select class="form-select form-select-sm" data-field="metric">' + options(['temperature_c','voltage_v','power_w','current_a','state'], rule.metric) + '</select></td>' +
+        '<td><select class="form-select form-select-sm" data-field="metric">' + options(notificationMetricOptions(rule.metric), rule.metric) + '</select></td>' +
         '<td><select class="form-select form-select-sm" data-field="condition">' + options(['above','below','changed','changed_to_on','changed_to_off','control','control_on','control_off'], rule.condition) + '</select></td>' +
         '<td><input type="number" step="0.01" class="form-control form-control-sm" data-field="threshold" value="' + esc(rule.threshold || 0) + '"></td>' +
         '<td><input class="form-control form-control-sm" data-field="arm_modes" value="' + esc(csv(rule.arm_modes || ['any'])) + '"></td>' +
@@ -462,6 +665,31 @@ const adminHTML = `<!doctype html>
       model.notifications = await resp.json();
       renderNotifications();
       alertMsg('success', 'Notifications saved');
+    }
+
+    function notificationMetricOptions(selected) {
+      const seen = {};
+      const values = [];
+      const discovered = [];
+      const add = function(metric) {
+        metric = String(metric || '').trim();
+        if (!metric || seen[metric]) return;
+        seen[metric] = true;
+        values.push(metric);
+      };
+      const discover = function(command) {
+        const metric = String((command || {}).metric || '').trim();
+        if (metric && !seen[metric]) discovered.push(metric);
+      };
+
+      CORE_NOTIFICATION_METRICS.forEach(add);
+      (model.jeedom_commands || []).forEach(discover);
+      (model.jeedom_devices || []).forEach(function(device) {
+        Object.values(device.raw_commands || {}).forEach(discover);
+      });
+      discovered.sort().forEach(add);
+      add(selected);
+      return values;
     }
 
     function options(values, selected) {

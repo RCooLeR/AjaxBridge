@@ -327,3 +327,98 @@ func TestStoreApplyDiscoveryAllowsHubSecurityActions(t *testing.T) {
 		}
 	}
 }
+
+func TestStoreApplyDiscoveryReconcilesOnlyCommandsOwnedByEqLogic(t *testing.T) {
+	store := NewStore("keep_last")
+	initial := Discovery{
+		EqLogicID:  "20",
+		Name:       "Remote",
+		ObjectName: "House",
+		DeviceType: "SpaceControl",
+		InfoCommands: map[string]DiscoveryCommand{
+			"369": {CommandID: "369", EqLogicID: "20", Name: "Nombre de defauts", Type: "info", Subtype: "numeric", Value: []byte(`2`)},
+			"370": {CommandID: "370", EqLogicID: "20", Name: "Version du firmware", Type: "info", Subtype: "string", Value: []byte(`"1.0"`)},
+		},
+		Actions: map[string]DiscoveryCommand{
+			"900": {CommandID: "900", EqLogicID: "20", LogicalID: "ARM", Name: "Arm", Type: "action"},
+		},
+		ReceivedAt: time.Unix(100, 0),
+	}
+	first := store.ApplyDiscovery(initial)
+	device := store.devices[first.Device.DeviceSlug]
+	legacyIssue := device.RawCommands["369"]
+	legacyIssue.EqLogicID = "" // simulate a cache written before owner provenance existed
+	device.RawCommands["369"] = legacyIssue
+	device.RawCommands["777"] = Command{
+		CommandID:  "777",
+		EqLogicID:  "21",
+		ObjectName: "House",
+		RawName:    "Temperature",
+		Metric:     "temperature_c",
+		Component:  ComponentSensor,
+	}
+	device.RawCommands["synthetic"] = Command{
+		RawName:   "Synthetic state",
+		Metric:    "state",
+		Component: ComponentBinarySensor,
+	}
+	device.Actions["other"] = Action{Action: "other", CommandID: "901", EqLogicID: "21"}
+	store.commands["777"] = device.DeviceSlug
+
+	refreshed := initial
+	refreshed.InfoCommands = map[string]DiscoveryCommand{
+		"374": {CommandID: "374", EqLogicID: "20", Name: "Batterie", Type: "info", Subtype: "numeric", Unit: "%", Historized: true, Value: []byte(`95`)},
+		"375": {CommandID: "375", EqLogicID: "20", Name: "Nombre de defauts", Type: "info", Subtype: "numeric", Value: []byte(`0`)},
+		"376": {CommandID: "376", EqLogicID: "20", Name: "Version du firmware", Type: "info", Subtype: "string", Value: []byte(`"1.1"`)},
+	}
+	refreshed.Actions = map[string]DiscoveryCommand{}
+	refreshed.ReceivedAt = time.Unix(200, 0)
+	result := store.ApplyDiscovery(refreshed)
+
+	if _, ok := result.Device.RawCommands["369"]; ok {
+		t.Fatal("legacy command replaced under a new id was not removed")
+	}
+	if _, ok := result.Device.RawCommands["370"]; ok {
+		t.Fatal("owned stale command was not removed")
+	}
+	if _, ok := result.Device.RawCommands["777"]; !ok {
+		t.Fatal("command owned by another eqLogic was removed")
+	}
+	if _, ok := result.Device.RawCommands["synthetic"]; !ok {
+		t.Fatal("synthetic command was removed")
+	}
+	if got := result.Device.RawCommands["374"]; got.EqLogicID != "20" || !got.Historized {
+		t.Fatalf("new command provenance = %#v", got)
+	}
+	if len(result.RemovedCommands) != 2 || result.RemovedCommands[0].CommandID != "369" || result.RemovedCommands[1].CommandID != "370" {
+		t.Fatalf("RemovedCommands = %#v, want 369 and 370", result.RemovedCommands)
+	}
+	if got := len(result.Device.PendingDiscoveryCleanups); got != 2 {
+		t.Fatalf("pending cleanups = %d, want 2", got)
+	}
+	if _, ok := result.Device.Actions["arm"]; ok {
+		t.Fatal("stale action owned by refreshed eqLogic was not removed")
+	}
+	if _, ok := result.Device.Actions["other"]; !ok {
+		t.Fatal("action owned by another eqLogic was removed")
+	}
+	if len(result.RemovedActions) != 1 || result.RemovedActions[0].CommandID != "900" {
+		t.Fatalf("RemovedActions = %#v, want 900", result.RemovedActions)
+	}
+	if len(result.Device.PendingActionDiscoveryCleanups) != 1 || result.Device.PendingActionDiscoveryCleanups[0].CommandID != "900" {
+		t.Fatalf("pending action cleanups = %#v, want 900", result.Device.PendingActionDiscoveryCleanups)
+	}
+	if !store.AcknowledgeCommandCleanups(result.RemovedCommands) {
+		t.Fatal("cleanup acknowledgement did not update the store")
+	}
+	if !store.AcknowledgeActionCleanups(result.RemovedActions) {
+		t.Fatal("action cleanup acknowledgement did not update the store")
+	}
+	acknowledged, _ := store.Device(result.Device.DeviceSlug)
+	if len(acknowledged.PendingDiscoveryCleanups) != 0 {
+		t.Fatalf("acknowledged cleanups still queued: %#v", acknowledged.PendingDiscoveryCleanups)
+	}
+	if len(acknowledged.PendingActionDiscoveryCleanups) != 0 {
+		t.Fatalf("acknowledged action cleanups still queued: %#v", acknowledged.PendingActionDiscoveryCleanups)
+	}
+}

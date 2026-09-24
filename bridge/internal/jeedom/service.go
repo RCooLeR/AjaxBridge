@@ -130,8 +130,11 @@ func (s *Service) HandleMessage(ctx context.Context, topic string, payload []byt
 		result := s.store.ApplyDiscovery(discovery)
 		s.persist(ctx, "persist Jeedom MQTT discovery")
 		if s.publisher != nil {
-			if err := s.publisher.PublishDevice(ctx, result.Device); err != nil {
+			published, err := s.publisher.PublishDeviceWithResult(ctx, result.Device)
+			if err != nil {
 				s.log.Debug().Err(err).Str("device", result.Device.DeviceSlug).Msg("publish Jeedom MQTT discovery state")
+			} else if published {
+				s.acknowledgePublishedCleanups(ctx, result.Device)
 			}
 		}
 		return
@@ -165,9 +168,23 @@ func (s *Service) HandleMessage(ctx context.Context, topic string, payload []byt
 	}
 
 	if s.publisher != nil {
-		if err := s.publisher.PublishDevice(ctx, result.Device); err != nil {
+		published, err := s.publisher.PublishDeviceWithResult(ctx, result.Device)
+		if err != nil {
 			s.log.Debug().Err(err).Str("device", result.Device.DeviceSlug).Msg("publish Jeedom MQTT state")
+		} else if published {
+			s.acknowledgePublishedCleanups(ctx, result.Device)
 		}
+	}
+}
+
+func (s *Service) acknowledgePublishedCleanups(ctx context.Context, device Device) {
+	if s == nil || s.store == nil || s.publisher == nil || !s.publisher.DiscoveryEnabled() {
+		return
+	}
+	commandsAcknowledged := s.store.AcknowledgeCommandCleanups(device.PendingDiscoveryCleanups)
+	actionsAcknowledged := s.store.AcknowledgeActionCleanups(device.PendingActionDiscoveryCleanups)
+	if commandsAcknowledged || actionsAcknowledged {
+		s.persist(ctx, "persist acknowledged Jeedom MQTT discovery cleanup")
 	}
 }
 

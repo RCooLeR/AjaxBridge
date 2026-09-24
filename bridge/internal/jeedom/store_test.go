@@ -328,6 +328,104 @@ func TestStorePropagatesLegacyDiscoveryActionsToExistingLinkedDevice(t *testing.
 	if result.Device.Actions["on"].CommandID != "220" || result.Device.Actions["off"].CommandID != "221" {
 		t.Fatalf("linked actions = %#v", result.Device.Actions)
 	}
+
+	delete(discovery.Actions, "221")
+	discovery.ReceivedAt = time.Unix(102, 0)
+	refreshed := store.ApplyDiscovery(discovery)
+	if _, ok := refreshed.Device.Actions["off"]; ok {
+		t.Fatalf("removed legacy off action survived on linked target: %#v", refreshed.Device.Actions)
+	}
+	if refreshed.Device.Actions["on"].CommandID != "220" {
+		t.Fatalf("remaining linked action = %#v", refreshed.Device.Actions)
+	}
+	if len(refreshed.Device.PendingActionDiscoveryCleanups) != 1 || refreshed.Device.PendingActionDiscoveryCleanups[0].CommandID != "221" {
+		t.Fatalf("linked action cleanup queue = %#v", refreshed.Device.PendingActionDiscoveryCleanups)
+	}
+}
+
+func TestStoreApplyKeepsDiscoveredCommandContractByID(t *testing.T) {
+	store := NewStore("keep_last")
+	store.ApplyDiscovery(Discovery{
+		EqLogicID: "50",
+		Name:      "Life quality",
+		InfoCommands: map[string]DiscoveryCommand{
+			"500": {
+				CommandID:   "500",
+				EqLogicID:   "50",
+				LogicalID:   "actualCO2",
+				GenericType: "CO2",
+				Name:        "CO2",
+				Type:        "info",
+				Subtype:     "numeric",
+				Unit:        "ppm",
+				Value:       json.RawMessage(`650`),
+			},
+			"501": {
+				CommandID: "501",
+				EqLogicID: "50",
+				Name:      "Version du firmware",
+				Type:      "info",
+				Subtype:   "string",
+				Value:     json.RawMessage(`"1.2.3"`),
+			},
+		},
+	})
+
+	result := store.Apply(Event{
+		Topic:       "jeedom/cmd/event/500",
+		CommandID:   "500",
+		DeviceName:  "Life quality",
+		CommandName: "Power renamed by user",
+		Type:        "info",
+		Subtype:     "numeric",
+		Value:       json.RawMessage(`700`),
+		ReceivedAt:  time.Unix(101, 0),
+	})
+
+	if result.Mapping.Metric != "co2_ppm" || result.Command.Metric != "co2_ppm" {
+		t.Fatalf("renamed event remapped discovered contract: result=%#v command=%#v", result.Mapping, result.Command)
+	}
+	if got := result.Device.Values["co2_ppm"]; got != float64(700) {
+		t.Fatalf("co2_ppm = %#v, want 700", got)
+	}
+	if _, exists := result.Device.Values["power_renamed_by_user_value"]; exists {
+		t.Fatalf("fallback metric leaked into state: %#v", result.Device.Values)
+	}
+
+	firmware := store.Apply(Event{
+		Topic:       "jeedom/cmd/event/501",
+		CommandID:   "501",
+		DeviceName:  "Life quality",
+		CommandName: "Power",
+		Type:        "info",
+		Subtype:     "string",
+		Value:       json.RawMessage(`"1.2.4"`),
+		ReceivedAt:  time.Unix(102, 0),
+	})
+	if firmware.Mapping.Metric != "firmware_version" || firmware.Mapping.Numeric {
+		t.Fatalf("renamed string contract = %#v", firmware.Mapping)
+	}
+	if got := firmware.Device.Values["firmware_version"]; got != "1.2.4" {
+		t.Fatalf("firmware_version = %#v, want 1.2.4", got)
+	}
+}
+
+func TestStatePayloadKeepsBridgeAndDeviceUpdateTimestampsSeparate(t *testing.T) {
+	device := Device{
+		Device:     "Button",
+		DeviceSlug: "button",
+		LastUpdate: time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC),
+		Values: map[string]any{
+			"device_last_update": "2026-09-24T00:11:31Z",
+		},
+	}
+	payload := StatePayload(device)
+	if got := payload["last_update"]; got != "2026-09-24T12:00:00Z" {
+		t.Fatalf("bridge last_update = %#v", got)
+	}
+	if got := payload["device_last_update"]; got != "2026-09-24T00:11:31Z" {
+		t.Fatalf("device_last_update = %#v", got)
+	}
 }
 
 func TestStoreNormalizesRelayVoltageFromCatalog(t *testing.T) {

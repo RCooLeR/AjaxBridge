@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -166,5 +167,72 @@ func normalizePersistedDevice(device Device) Device {
 	if device.HAModel == "" {
 		device.HAModel = firstNonEmpty(device.JeedomDeviceType, "Jeedom MQTT Bridge")
 	}
+	reconcilePersistedMappings(&device)
 	return device
+}
+
+// reconcilePersistedMappings upgrades cached commands whenever canonical
+// Jeedom mappings evolve. Without this pass, a bridge restart would keep old
+// fallback names and Home Assistant components until every quiet command
+// emitted a fresh event or Jeedom discovery was forced manually.
+func reconcilePersistedMappings(device *Device) {
+	if device == nil {
+		return
+	}
+	commandIDs := make([]string, 0, len(device.RawCommands))
+	for commandID := range device.RawCommands {
+		commandIDs = append(commandIDs, commandID)
+	}
+	sort.Strings(commandIDs)
+
+	oldMetrics := make(map[string]struct{})
+	for _, commandID := range commandIDs {
+		command := device.RawCommands[commandID]
+		if command.CommandID == "" {
+			continue
+		}
+		event := Event{
+			CommandID:   command.CommandID,
+			LogicalID:   command.LogicalID,
+			GenericType: command.GenericType,
+			ObjectName:  command.ObjectName,
+			DeviceName:  firstNonEmpty(command.Device, device.Device),
+			CommandName: firstNonEmpty(command.RawName, command.Name),
+			Name:        firstNonEmpty(command.RawName, command.Name),
+			Type:        command.Type,
+			Subtype:     command.Subtype,
+			Unit:        command.Unit,
+		}
+		mapping := MappingFor(event)
+		if mapping.fallback {
+			// Legacy cache entries do not have stable logical or generic IDs. If
+			// their display name was customized, keep the command-ID contract
+			// already persisted instead of replacing it with a name-based metric.
+			mapping = mappingFromCommandContract(command, mapping)
+		}
+		oldMetric := command.Metric
+		if oldMetric != "" && oldMetric != mapping.Metric {
+			oldMetrics[oldMetric] = struct{}{}
+		}
+		command.Name = EnglishCommandName(firstNonEmpty(command.RawName, command.Name), mapping, command.CommandID)
+		command.Metric = mapping.Metric
+		command.Component = mapping.Component
+		command.Unit = mapping.Unit
+		command.DeviceClass = mapping.DeviceClass
+		command.StateClass = mapping.StateClass
+		command.EntityCategory = mapping.EntityCategory
+		if command.Value != nil {
+			if value, ok := mappedAnyValue(command.Value, mapping, deviceTypeForNormalization(*device)); ok {
+				command.Value = value
+				device.Values[mapping.Metric] = value
+				applyDerivedValuesFromEventCode(mapping, device, value, command.LastValueAt)
+				applyDerivedWallSwitchStateFromLoad(mapping, device, value)
+				applyDerivedWaterStopState(mapping, device, value)
+			}
+		}
+		device.RawCommands[commandID] = command
+	}
+	for metric := range oldMetrics {
+		deleteUnreferencedMetric(device, metric)
+	}
 }

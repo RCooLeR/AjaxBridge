@@ -1,6 +1,7 @@
 package jeedom
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"slices"
@@ -34,34 +35,37 @@ type Store struct {
 }
 
 type Device struct {
-	Source            string             `json:"source"`
-	ObjectName        string             `json:"object"`
-	Device            string             `json:"device"`
-	DeviceSlug        string             `json:"device_slug"`
-	BaseSlug          string             `json:"base_slug,omitempty"`
-	LastUpdate        time.Time          `json:"last_update"`
-	Values            map[string]any     `json:"values"`
-	RawCommands       map[string]Command `json:"raw_commands"`
-	HAIdentifiers     []string           `json:"ha_identifiers,omitempty"`
-	HAManufacturer    string             `json:"ha_manufacturer,omitempty"`
-	HAModel           string             `json:"ha_model,omitempty"`
-	SuggestedArea     string             `json:"suggested_area,omitempty"`
-	LegacyDeviceSlugs []string           `json:"legacy_device_slugs,omitempty"`
-	LinkedSource      string             `json:"linked_source,omitempty"`
-	LinkedAccount     string             `json:"linked_account,omitempty"`
-	LinkedZone        string             `json:"linked_zone,omitempty"`
-	DiscoveryDisabled bool               `json:"discovery_disabled,omitempty"`
-	JeedomID          string             `json:"jeedom_id,omitempty"`
-	JeedomLogicalID   string             `json:"jeedom_logical_id,omitempty"`
-	JeedomDeviceType  string             `json:"jeedom_device_type,omitempty"`
-	JeedomEnabled     bool               `json:"jeedom_enabled,omitempty"`
-	JeedomVisible     bool               `json:"jeedom_visible,omitempty"`
-	Actions           map[string]Action  `json:"actions,omitempty"`
-	publishRevision   uint64
+	Source                         string             `json:"source"`
+	ObjectName                     string             `json:"object"`
+	Device                         string             `json:"device"`
+	DeviceSlug                     string             `json:"device_slug"`
+	BaseSlug                       string             `json:"base_slug,omitempty"`
+	LastUpdate                     time.Time          `json:"last_update"`
+	Values                         map[string]any     `json:"values"`
+	RawCommands                    map[string]Command `json:"raw_commands"`
+	HAIdentifiers                  []string           `json:"ha_identifiers,omitempty"`
+	HAManufacturer                 string             `json:"ha_manufacturer,omitempty"`
+	HAModel                        string             `json:"ha_model,omitempty"`
+	SuggestedArea                  string             `json:"suggested_area,omitempty"`
+	LegacyDeviceSlugs              []string           `json:"legacy_device_slugs,omitempty"`
+	LinkedSource                   string             `json:"linked_source,omitempty"`
+	LinkedAccount                  string             `json:"linked_account,omitempty"`
+	LinkedZone                     string             `json:"linked_zone,omitempty"`
+	DiscoveryDisabled              bool               `json:"discovery_disabled,omitempty"`
+	JeedomID                       string             `json:"jeedom_id,omitempty"`
+	JeedomLogicalID                string             `json:"jeedom_logical_id,omitempty"`
+	JeedomDeviceType               string             `json:"jeedom_device_type,omitempty"`
+	JeedomEnabled                  bool               `json:"jeedom_enabled,omitempty"`
+	JeedomVisible                  bool               `json:"jeedom_visible,omitempty"`
+	Actions                        map[string]Action  `json:"actions,omitempty"`
+	PendingDiscoveryCleanups       []Command          `json:"pending_discovery_cleanups,omitempty"`
+	PendingActionDiscoveryCleanups []Action           `json:"pending_action_discovery_cleanups,omitempty"`
+	publishRevision                uint64
 }
 
 type Command struct {
 	CommandID      string    `json:"command_id"`
+	EqLogicID      string    `json:"eq_logic_id,omitempty"`
 	ObjectName     string    `json:"object"`
 	Device         string    `json:"device"`
 	DeviceSlug     string    `json:"device_slug"`
@@ -79,6 +83,7 @@ type Command struct {
 	LogicalID      string    `json:"logical_id,omitempty"`
 	GenericType    string    `json:"generic_type,omitempty"`
 	Visible        bool      `json:"visible,omitempty"`
+	Historized     bool      `json:"historized,omitempty"`
 	Value          any       `json:"value,omitempty"`
 	LastUpdate     time.Time `json:"last_update"`
 	LastValueAt    time.Time `json:"last_value_at,omitempty"`
@@ -126,8 +131,10 @@ type ApplyResult struct {
 }
 
 type ApplyDiscoveryResult struct {
-	Device  Device
-	Actions []Action
+	Device          Device
+	Actions         []Action
+	RemovedCommands []Command
+	RemovedActions  []Action
 }
 
 type IdentityResolver interface {
@@ -187,6 +194,12 @@ func (s *Store) Apply(evt Event) ApplyResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	knownDeviceSlug := s.commands[evt.CommandID]
+	if knownDevice := s.devices[knownDeviceSlug]; knownDevice != nil {
+		if knownCommand, ok := knownDevice.RawCommands[evt.CommandID]; ok {
+			mapping = mappingFromCommandContract(knownCommand, mapping)
+		}
+	}
 	identity := s.identityFor(evt, mapping)
 	deviceSlug := identity.DeviceSlug
 	device := s.devices[deviceSlug]
@@ -243,6 +256,8 @@ func (s *Store) Apply(evt Event) ApplyResult {
 		command.LogicalID = existing.LogicalID
 		command.GenericType = existing.GenericType
 		command.Visible = existing.Visible
+		command.Historized = existing.Historized
+		command.EqLogicID = existing.EqLogicID
 		command.Value = existing.Value
 		command.LastValueAt = existing.LastValueAt
 		command.EmptyValue = existing.EmptyValue
@@ -270,6 +285,7 @@ func (s *Store) Apply(evt Event) ApplyResult {
 			result.UpdatedValue = true
 			applyDerivedValuesFromEventCode(mapping, device, value, now)
 			applyDerivedWallSwitchStateFromLoad(mapping, device, value)
+			applyDerivedWaterStopState(mapping, device, value)
 			if number, numeric := numericValue(value); numeric {
 				result.NumericValue = number
 				result.HasNumeric = true
@@ -278,6 +294,9 @@ func (s *Store) Apply(evt Event) ApplyResult {
 	}
 
 	device.RawCommands[evt.CommandID] = command
+	if hasExisting && existing.Metric != "" && existing.Metric != command.Metric {
+		deleteUnreferencedMetric(device, existing.Metric)
+	}
 	s.commands[evt.CommandID] = deviceSlug
 	s.bumpDevicePublishRevisionLocked(device)
 	result.Device = copyDevice(*device)
@@ -321,6 +340,7 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 		device.Actions = make(map[string]Action)
 	}
 
+	previousJeedomID := device.JeedomID
 	device.Source = Source
 	device.ObjectName = discovery.ObjectName
 	device.Device = firstNonEmpty(identity.DeviceName, discovery.Name)
@@ -345,10 +365,40 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 	}
 	s.mergeLegacyActionsLocked(device)
 
+	currentCommandIDs := make(map[string]struct{}, len(discovery.InfoCommands))
+	for _, info := range discovery.InfoCommands {
+		currentCommandIDs[info.CommandID] = struct{}{}
+	}
+	removedCommands := make([]Command, 0)
+	for commandID, command := range device.RawCommands {
+		if command.CommandID == "" {
+			continue
+		}
+		if _, current := currentCommandIDs[commandID]; current {
+			continue
+		}
+		ownedByDiscovery := command.EqLogicID == discovery.EqLogicID
+		legacyReplacement := command.EqLogicID == "" &&
+			previousJeedomID == discovery.EqLogicID &&
+			discoveryReplacesCommand(discovery, command)
+		if !ownedByDiscovery && !legacyReplacement {
+			continue
+		}
+		removedCommands = append(removedCommands, command)
+		delete(device.RawCommands, commandID)
+		delete(s.commands, commandID)
+	}
+	sort.Slice(removedCommands, func(i, j int) bool {
+		return removedCommands[i].CommandID < removedCommands[j].CommandID
+	})
+	queueCommandCleanups(device, removedCommands)
+
 	for _, info := range discovery.InfoCommands {
 		mapping := MappingFor(Event{
 			Topic:       "jeedom/cmd/event/" + info.CommandID,
 			CommandID:   info.CommandID,
+			LogicalID:   info.LogicalID,
+			GenericType: info.GenericType,
 			ObjectName:  discovery.ObjectName,
 			DeviceName:  discovery.Name,
 			CommandName: info.Name,
@@ -360,6 +410,7 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 		})
 		command := Command{
 			CommandID:      info.CommandID,
+			EqLogicID:      firstNonEmpty(info.EqLogicID, discovery.EqLogicID),
 			ObjectName:     discovery.ObjectName,
 			Device:         discovery.Name,
 			DeviceSlug:     deviceSlug,
@@ -377,6 +428,7 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 			LogicalID:      info.LogicalID,
 			GenericType:    info.GenericType,
 			Visible:        info.Visible,
+			Historized:     info.Historized,
 			LastUpdate:     now,
 		}
 		existing, hasExisting := device.RawCommands[info.CommandID]
@@ -387,6 +439,13 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 			if existing.LastUpdate.After(command.LastUpdate) {
 				command.LastUpdate = existing.LastUpdate
 			}
+			if existing.Value != nil {
+				if value, ok := mappedAnyValue(existing.Value, mapping, deviceTypeForNormalization(*device)); ok {
+					command.Value = value
+					device.Values[mapping.Metric] = value
+					applyDerivedWaterStopState(mapping, device, value)
+				}
+			}
 		}
 		if !EmptyRawValue(info.Value) && (!hasExisting || existing.LastValueAt.IsZero()) {
 			if value, ok := mappedValue(Event{Value: info.Value}, mapping, deviceTypeForNormalization(*device)); ok {
@@ -396,13 +455,39 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 				command.EmptyValue = false
 				applyDerivedValuesFromEventCode(mapping, device, value, now)
 				applyDerivedWallSwitchStateFromLoad(mapping, device, value)
+				applyDerivedWaterStopState(mapping, device, value)
 			}
 		}
 		device.RawCommands[info.CommandID] = command
+		if hasExisting && existing.Metric != "" && existing.Metric != command.Metric {
+			deleteUnreferencedMetric(device, existing.Metric)
+		}
 		s.commands[info.CommandID] = deviceSlug
+	}
+	for _, command := range removedCommands {
+		deleteUnreferencedMetric(device, command.Metric)
 	}
 
 	actions := make([]Action, 0, len(discovery.Actions))
+	currentActionIDs := make(map[string]struct{}, len(discovery.Actions))
+	for _, actionCommand := range discovery.Actions {
+		currentActionIDs[actionCommand.CommandID] = struct{}{}
+	}
+	removedActions := make([]Action, 0)
+	for actionName, action := range device.Actions {
+		if action.EqLogicID != discovery.EqLogicID {
+			continue
+		}
+		if _, current := currentActionIDs[action.CommandID]; current {
+			continue
+		}
+		removedActions = append(removedActions, action)
+		delete(device.Actions, actionName)
+	}
+	sort.Slice(removedActions, func(i, j int) bool {
+		return removedActions[i].CommandID < removedActions[j].CommandID
+	})
+	queueActionCleanups(device, removedActions)
 	for _, actionCommand := range discovery.Actions {
 		actionName := normalizeDiscoveryAction(actionCommand)
 		if actionName == "" {
@@ -434,12 +519,32 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 
 	s.bumpDevicePublishRevisionLocked(device)
 	if target := s.linkedTargetForLegacyLocked(deviceSlug); target != nil {
+		for _, removed := range removedActions {
+			for actionName, targetAction := range target.Actions {
+				if targetAction.CommandID == removed.CommandID {
+					delete(target.Actions, actionName)
+				}
+			}
+		}
 		s.copyActionsLocked(target, device)
 		s.bumpDevicePublishRevisionLocked(target)
-		return ApplyDiscoveryResult{Device: copyDevice(*target), Actions: actionsForDevice(target)}
+		resultDevice := copyDevice(*target)
+		queueCommandCleanups(&resultDevice, removedCommands)
+		queueActionCleanups(&resultDevice, removedActions)
+		return ApplyDiscoveryResult{
+			Device:          resultDevice,
+			Actions:         actionsForDevice(target),
+			RemovedCommands: removedCommands,
+			RemovedActions:  removedActions,
+		}
 	}
 
-	return ApplyDiscoveryResult{Device: copyDevice(*device), Actions: actions}
+	return ApplyDiscoveryResult{
+		Device:          copyDevice(*device),
+		Actions:         actions,
+		RemovedCommands: removedCommands,
+		RemovedActions:  removedActions,
+	}
 }
 
 func (s *Store) ReconcileResolver(resolver IdentityResolver) []Device {
@@ -540,11 +645,15 @@ func (s *Store) reconciledIdentityLocked(device Device, resolver IdentityResolve
 		}
 		for commandID, command := range device.RawCommands {
 			discovery.InfoCommands[commandID] = DiscoveryCommand{
-				CommandID: commandID,
-				Name:      firstNonEmpty(command.RawName, command.Name),
-				Type:      command.Type,
-				Subtype:   command.Subtype,
-				Unit:      command.Unit,
+				CommandID:   commandID,
+				EqLogicID:   command.EqLogicID,
+				LogicalID:   command.LogicalID,
+				GenericType: command.GenericType,
+				Name:        firstNonEmpty(command.RawName, command.Name),
+				Type:        command.Type,
+				Subtype:     command.Subtype,
+				Unit:        command.Unit,
+				Historized:  command.Historized,
 			}
 		}
 		for actionName, action := range device.Actions {
@@ -627,6 +736,8 @@ func (s *Store) mergeDeviceIntoIdentityLocked(sourceSlug string, identity Device
 		action.DeviceType = firstNonEmpty(identity.HAModel, source.JeedomDeviceType, source.HAModel, action.DeviceType)
 		target.Actions[actionName] = action
 	}
+	queueCommandCleanups(target, source.PendingDiscoveryCleanups)
+	queueActionCleanups(target, source.PendingActionDiscoveryCleanups)
 
 	target.Source = Source
 	target.DeviceSlug = identity.DeviceSlug
@@ -755,6 +866,8 @@ func deviceHasMetric(device *Device, metric string) bool {
 
 func mappedValue(evt Event, mapping Mapping, deviceType string) (any, bool) {
 	switch {
+	case mapping.Timestamp:
+		return timestampRawValue(evt.Value)
 	case mapping.Numeric:
 		value, ok := NumericRawValue(evt.Value)
 		if !ok || !finiteNumericValue(value) {
@@ -762,10 +875,191 @@ func mappedValue(evt Event, mapping Mapping, deviceType string) (any, bool) {
 		}
 		return normalizeNumericValue(mapping, deviceType, value), true
 	case mapping.Binary:
-		return BoolRawValue(evt.Value)
+		return BoolRawValueForMapping(evt.Value, mapping)
 	default:
 		return StringRawValue(evt.Value)
 	}
+}
+
+func mappingFromCommandContract(command Command, fallback Mapping) Mapping {
+	if command.Metric == "" || command.Component == "" {
+		return fallback
+	}
+	mapping := Mapping{
+		Metric:         command.Metric,
+		Component:      command.Component,
+		EntityName:     firstNonEmpty(command.Name, fallback.EntityName),
+		Unit:           command.Unit,
+		DeviceClass:    command.DeviceClass,
+		StateClass:     command.StateClass,
+		EntityCategory: command.EntityCategory,
+	}
+	mapping.Timestamp = command.Component == ComponentSensor && strings.EqualFold(command.DeviceClass, "timestamp")
+	mapping.Binary = command.Component == ComponentBinarySensor
+	if !mapping.Timestamp && !mapping.Binary {
+		switch strings.ToLower(strings.TrimSpace(command.Subtype)) {
+		case "numeric":
+			mapping.Numeric = true
+		case "string", "other":
+			mapping.Numeric = false
+		default:
+			mapping.Numeric = fallback.Numeric
+		}
+	}
+	return mapping
+}
+
+func mappedAnyValue(value any, mapping Mapping, deviceType string) (any, bool) {
+	if value == nil {
+		return nil, false
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, false
+	}
+	return mappedValue(Event{Value: raw}, mapping, deviceType)
+}
+
+func timestampRawValue(value json.RawMessage) (string, bool) {
+	if number, ok := NumericRawValue(value); ok && finiteNumericValue(number) {
+		seconds, nanoseconds := unixTimestampParts(number)
+		if seconds <= 0 {
+			return "", false
+		}
+		return time.Unix(seconds, nanoseconds).UTC().Format(time.RFC3339Nano), true
+	}
+	text, ok := StringRawValue(value)
+	if !ok {
+		return "", false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(text))
+	if err != nil {
+		return "", false
+	}
+	return parsed.UTC().Format(time.RFC3339Nano), true
+}
+
+func unixTimestampParts(value float64) (int64, int64) {
+	abs := math.Abs(value)
+	scale := float64(1)
+	switch {
+	case abs >= 1e17:
+		scale = 1e9
+	case abs >= 1e14:
+		scale = 1e6
+	case abs >= 1e11:
+		scale = 1e3
+	}
+	secondsFloat := value / scale
+	seconds := int64(secondsFloat)
+	nanoseconds := int64((secondsFloat - float64(seconds)) * float64(time.Second))
+	return seconds, nanoseconds
+}
+
+func deleteUnreferencedMetric(device *Device, metric string) {
+	if device == nil || strings.TrimSpace(metric) == "" {
+		return
+	}
+	for _, command := range device.RawCommands {
+		if command.Metric == metric {
+			return
+		}
+	}
+	delete(device.Values, metric)
+}
+
+func queueCommandCleanups(device *Device, commands []Command) {
+	if device == nil || len(commands) == 0 {
+		return
+	}
+	byID := make(map[string]Command, len(device.PendingDiscoveryCleanups)+len(commands))
+	for _, command := range device.PendingDiscoveryCleanups {
+		if command.CommandID != "" {
+			byID[command.CommandID] = command
+		}
+	}
+	for _, command := range commands {
+		if command.CommandID != "" {
+			byID[command.CommandID] = command
+		}
+	}
+	ids := make([]string, 0, len(byID))
+	for commandID := range byID {
+		ids = append(ids, commandID)
+	}
+	sort.Strings(ids)
+	device.PendingDiscoveryCleanups = make([]Command, 0, len(ids))
+	for _, commandID := range ids {
+		device.PendingDiscoveryCleanups = append(device.PendingDiscoveryCleanups, byID[commandID])
+	}
+}
+
+func queueActionCleanups(device *Device, actions []Action) {
+	if device == nil || len(actions) == 0 {
+		return
+	}
+	byID := make(map[string]Action, len(device.PendingActionDiscoveryCleanups)+len(actions))
+	for _, action := range device.PendingActionDiscoveryCleanups {
+		if action.CommandID != "" {
+			byID[action.CommandID] = action
+		}
+	}
+	for _, action := range actions {
+		if action.CommandID != "" {
+			byID[action.CommandID] = action
+		}
+	}
+	ids := make([]string, 0, len(byID))
+	for commandID := range byID {
+		ids = append(ids, commandID)
+	}
+	sort.Strings(ids)
+	device.PendingActionDiscoveryCleanups = make([]Action, 0, len(ids))
+	for _, commandID := range ids {
+		device.PendingActionDiscoveryCleanups = append(device.PendingActionDiscoveryCleanups, byID[commandID])
+	}
+}
+
+// discoveryReplacesCommand identifies pre-provenance cache entries that have
+// been recreated by Jeedom under a new command id. It intentionally requires
+// the same source object and command signature: a canonical Ajax device can
+// contain commands merged from more than one Jeedom eqLogic, and those must
+// never be removed just because they are absent from this discovery payload.
+func discoveryReplacesCommand(discovery Discovery, command Command) bool {
+	if command.CommandID == "" {
+		return false
+	}
+	if command.ObjectName != "" && discovery.ObjectName != "" &&
+		commandKey(command.ObjectName) != commandKey(discovery.ObjectName) {
+		return false
+	}
+	if command.Device != "" && discovery.Name != "" &&
+		commandKey(command.Device) != commandKey(discovery.Name) {
+		return false
+	}
+	commandName := commandKey(firstNonEmpty(command.RawName, command.Name))
+	for _, candidate := range discovery.InfoCommands {
+		if candidate.CommandID == "" || candidate.CommandID == command.CommandID {
+			continue
+		}
+		if command.LogicalID != "" && candidate.LogicalID != "" &&
+			command.LogicalID == candidate.LogicalID {
+			return true
+		}
+		if commandName == "" || commandName != commandKey(candidate.Name) {
+			continue
+		}
+		if command.Type != "" && candidate.Type != "" &&
+			!strings.EqualFold(command.Type, candidate.Type) {
+			continue
+		}
+		if command.Subtype != "" && candidate.Subtype != "" &&
+			!strings.EqualFold(command.Subtype, candidate.Subtype) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func applyDerivedValuesFromEventCode(mapping Mapping, device *Device, value any, now time.Time) {
@@ -798,6 +1092,20 @@ func applyDerivedWallSwitchStateFromLoad(mapping Mapping, device *Device, value 
 	load, ok := numericValue(value)
 	if ok && load > 0 {
 		device.Values["state"] = true
+	}
+}
+
+func applyDerivedWaterStopState(mapping Mapping, device *Device, value any) {
+	if device == nil || mapping.Metric != "valve_position" || !isWaterStopDevice(*device) {
+		return
+	}
+	switch strings.ToUpper(strings.TrimSpace(fmt.Sprint(value))) {
+	case "OPEN", "OPENED":
+		device.Values["state"] = true
+	case "CLOSED", "CLOSE":
+		device.Values["state"] = false
+	case "INTERMEDIATE", "OPENING", "CLOSING", "MOVING":
+		device.Values["state"] = nil
 	}
 }
 
@@ -1026,6 +1334,78 @@ func (s *Store) Devices() []Device {
 	defer s.mu.RUnlock()
 
 	return s.devicesLocked()
+}
+
+// AcknowledgeCommandCleanups removes persisted retained-discovery tombstones
+// after the MQTT broker accepted them. Keeping this queue in the cache makes a
+// bridge restart or transient broker failure retry cleanup instead of leaving
+// orphaned Home Assistant entities forever.
+func (s *Store) AcknowledgeCommandCleanups(commands []Command) bool {
+	if s == nil || len(commands) == 0 {
+		return false
+	}
+	acknowledged := make(map[string]struct{}, len(commands))
+	for _, command := range commands {
+		if command.CommandID != "" {
+			acknowledged[command.CommandID] = struct{}{}
+		}
+	}
+	if len(acknowledged) == 0 {
+		return false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := false
+	for _, device := range s.devices {
+		if device == nil || len(device.PendingDiscoveryCleanups) == 0 {
+			continue
+		}
+		kept := device.PendingDiscoveryCleanups[:0]
+		for _, pending := range device.PendingDiscoveryCleanups {
+			if _, ok := acknowledged[pending.CommandID]; ok {
+				changed = true
+				continue
+			}
+			kept = append(kept, pending)
+		}
+		device.PendingDiscoveryCleanups = kept
+	}
+	return changed
+}
+
+func (s *Store) AcknowledgeActionCleanups(actions []Action) bool {
+	if s == nil || len(actions) == 0 {
+		return false
+	}
+	acknowledged := make(map[string]struct{}, len(actions))
+	for _, action := range actions {
+		if action.CommandID != "" {
+			acknowledged[action.CommandID] = struct{}{}
+		}
+	}
+	if len(acknowledged) == 0 {
+		return false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := false
+	for _, device := range s.devices {
+		if device == nil || len(device.PendingActionDiscoveryCleanups) == 0 {
+			continue
+		}
+		kept := device.PendingActionDiscoveryCleanups[:0]
+		for _, pending := range device.PendingActionDiscoveryCleanups {
+			if _, ok := acknowledged[pending.CommandID]; ok {
+				changed = true
+				continue
+			}
+			kept = append(kept, pending)
+		}
+		device.PendingActionDiscoveryCleanups = kept
+	}
+	return changed
 }
 
 func (s *Store) devicesLocked() []Device {
@@ -1305,6 +1685,8 @@ func copyDevice(device Device) Device {
 	device.HAIdentifiers = append([]string(nil), device.HAIdentifiers...)
 	device.LegacyDeviceSlugs = append([]string(nil), device.LegacyDeviceSlugs...)
 	device.Actions = copyActions(device.Actions)
+	device.PendingDiscoveryCleanups = append([]Command(nil), device.PendingDiscoveryCleanups...)
+	device.PendingActionDiscoveryCleanups = append([]Action(nil), device.PendingActionDiscoveryCleanups...)
 	return device
 }
 

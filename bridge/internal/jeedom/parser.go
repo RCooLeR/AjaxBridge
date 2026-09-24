@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 var (
@@ -22,6 +23,8 @@ type Event struct {
 	DeviceName  string          `json:"device"`
 	CommandName string          `json:"command"`
 	Name        string          `json:"name"`
+	LogicalID   string          `json:"logical_id"`
+	GenericType string          `json:"generic_type"`
 	Type        string          `json:"type"`
 	Subtype     string          `json:"subtype"`
 	Unit        string          `json:"unit"`
@@ -31,12 +34,16 @@ type Event struct {
 }
 
 type payload struct {
-	Value     json.RawMessage `json:"value"`
-	HumanName string          `json:"humanName"`
-	Unite     string          `json:"unite"`
-	Name      string          `json:"name"`
-	Type      string          `json:"type"`
-	Subtype   string          `json:"subtype"`
+	Value          json.RawMessage `json:"value"`
+	HumanName      string          `json:"humanName"`
+	Unite          string          `json:"unite"`
+	Name           string          `json:"name"`
+	LogicalID      string          `json:"logicalId"`
+	LogicalIDAlt   string          `json:"logical_id"`
+	GenericType    string          `json:"generic_type"`
+	GenericTypeAlt string          `json:"genericType"`
+	Type           string          `json:"type"`
+	Subtype        string          `json:"subtype"`
 }
 
 func ParseMessage(topic string, body []byte, receivedAt time.Time) (Event, error) {
@@ -65,6 +72,8 @@ func ParseMessage(topic string, body []byte, receivedAt time.Time) (Event, error
 		DeviceName:  RepairText(deviceName),
 		CommandName: RepairText(commandName),
 		Name:        RepairText(raw.Name),
+		LogicalID:   RepairText(firstNonEmpty(raw.LogicalID, raw.LogicalIDAlt)),
+		GenericType: RepairText(firstNonEmpty(raw.GenericType, raw.GenericTypeAlt)),
 		Type:        strings.TrimSpace(raw.Type),
 		Subtype:     strings.TrimSpace(raw.Subtype),
 		Unit:        RepairText(raw.Unite),
@@ -183,14 +192,77 @@ func BoolRawValue(value json.RawMessage) (bool, bool) {
 	if err := json.Unmarshal(value, &text); err != nil {
 		return false, false
 	}
-	switch strings.ToLower(strings.TrimSpace(RepairText(text))) {
-	case "1", "true", "on", "open", "opened", "ouvert", "ouverte", "oui", "yes", "active", "actif":
+	token := boolEnumToken(text)
+	switch token {
+	case "1", "TRUE", "ON", "OPEN", "OPENED", "OUVERT", "OUVERTE", "OUI", "YES", "ACTIVE", "ACTIF",
+		"CONNECTED", "CONNECTE", "CONNECTEE", "ENABLED", "CHARGING", "EN_CHARGE":
 		return true, true
-	case "0", "false", "off", "closed", "close", "ferme", "fermee", "non", "no", "inactive", "inactif":
+	case "0", "FALSE", "OFF", "CLOSED", "CLOSE", "FERME", "FERMEE", "NON", "NO", "INACTIVE", "INACTIF",
+		"DISCONNECTED", "DECONNECTED", "DECONNECTE", "DECONNECTEE", "NOT_CONNECTED", "DISABLED", "DESACTIVE", "DESACTIVEE", "NOT_ENABLED",
+		"NOT_CHARGING", "PAS_EN_CHARGE", "DISCHARGING", "UNDETECTED":
 		return false, true
-	default:
+	}
+	if token == "NOT_DETECTED" || strings.HasSuffix(token, "_NOT_DETECTED") || strings.HasSuffix(token, "_UNDETECTED") {
+		return false, true
+	}
+	if token == "DETECTED" || strings.HasSuffix(token, "_DETECTED") {
+		return true, true
+	}
+	return false, false
+}
+
+// BoolRawValueForMapping resolves enum values whose polarity depends on what
+// the entity represents. In particular, OK is false for a problem sensor but
+// true for a connectivity sensor; treating it globally would invert one of the
+// two. Callers should use this helper when a Mapping is available.
+func BoolRawValueForMapping(value json.RawMessage, mapping Mapping) (bool, bool) {
+	if result, ok := BoolRawValue(value); ok {
+		return result, true
+	}
+	if !mapping.Binary || EmptyRawValue(value) {
 		return false, false
 	}
+	var text string
+	if err := json.Unmarshal(value, &text); err != nil {
+		return false, false
+	}
+	token := boolEnumToken(text)
+	switch mapping.DeviceClass {
+	case "problem":
+		switch token {
+		case "FAULT", "FAILED", "FAILURE", "ERROR", "DEFAUT", "ECHEC":
+			return true, true
+		case "OK", "NORMAL", "HEALTHY", "NO_FAULT", "NOT_FAILED":
+			return false, true
+		}
+	case "connectivity":
+		switch token {
+		case "OK", "ONLINE", "AVAILABLE":
+			return true, true
+		case "FAULT", "FAILED", "OFFLINE", "UNAVAILABLE":
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func boolEnumToken(value string) string {
+	value = strings.TrimSpace(RepairText(value))
+	var b strings.Builder
+	separator := false
+	for _, r := range value {
+		r = unicode.ToUpper(foldLatin(r))
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			if separator && b.Len() > 0 {
+				b.WriteByte('_')
+			}
+			b.WriteRune(r)
+			separator = false
+			continue
+		}
+		separator = true
+	}
+	return b.String()
 }
 
 func StringRawValue(value json.RawMessage) (string, bool) {

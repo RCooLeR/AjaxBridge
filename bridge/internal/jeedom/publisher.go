@@ -79,16 +79,89 @@ func NewPublisher(cfg PublisherConfig, mqtt MQTTClient) *Publisher {
 	return &Publisher{cfg: cfg, mqtt: mqtt, gates: make(map[string]*devicePublishGate)}
 }
 
+func (p *Publisher) DiscoveryEnabled() bool {
+	return p != nil && p.mqtt != nil && p.cfg.Discovery
+}
+
 func (p *Publisher) PublishDevice(ctx context.Context, device Device) error {
+	_, err := p.PublishDeviceWithResult(ctx, device)
+	return err
+}
+
+// PublishDeviceWithResult reports whether this snapshot actually passed the
+// revision gate. Callers that acknowledge persisted discovery tombstones must
+// only do so when published is true and err is nil.
+func (p *Publisher) PublishDeviceWithResult(ctx context.Context, device Device) (published bool, err error) {
 	if p == nil || p.mqtt == nil {
-		return nil
+		return false, nil
 	}
 	release, current := p.beginDevicePublish(device)
 	if !current {
-		return nil
+		return false, nil
 	}
 	defer release()
-	return p.publishDevice(ctx, device)
+	if err := p.CleanupCommands(ctx, device.PendingDiscoveryCleanups); err != nil {
+		return false, err
+	}
+	if err := p.CleanupActions(ctx, device.PendingActionDiscoveryCleanups, device); err != nil {
+		return false, err
+	}
+	if err := p.publishDevice(ctx, device); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// CleanupCommands removes retained Home Assistant discovery for commands that
+// disappeared from an authoritative Jeedom eqLogic discovery payload. State
+// payloads are republished separately by PublishDevice without those metrics.
+func (p *Publisher) CleanupCommands(ctx context.Context, commands []Command) error {
+	if !p.DiscoveryEnabled() {
+		return nil
+	}
+	commands = append([]Command(nil), commands...)
+	sort.Slice(commands, func(i, j int) bool {
+		return commands[i].CommandID < commands[j].CommandID
+	})
+	for _, command := range commands {
+		if err := p.publishCommandDiscoveryCleanup(ctx, command, "jeedom_removed_command_cleanup"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *Publisher) CleanupActions(ctx context.Context, actions []Action, device Device) error {
+	if !p.DiscoveryEnabled() || len(actions) == 0 {
+		return nil
+	}
+	actions = append([]Action(nil), actions...)
+	sort.Slice(actions, func(i, j int) bool {
+		return actions[i].CommandID < actions[j].CommandID
+	})
+	for _, action := range actions {
+		actionSlug := Slug(NormalizeControlAction(action.Action))
+		if actionSlug == "" {
+			continue
+		}
+		deviceSlugs := compactUniqueStrings([]string{device.DeviceSlug, action.DeviceSlug})
+		for _, deviceSlug := range deviceSlugs {
+			if actionSlug == "on" || actionSlug == "off" {
+				if err := p.publishSwitchDiscoveryCleanup(ctx, deviceSlug, "jeedom_removed_action_cleanup"); err != nil {
+					return err
+				}
+			}
+			if err := p.publishButtonDiscoveryCleanup(ctx, deviceSlug, actionSlug, "jeedom_removed_action_cleanup"); err != nil {
+				return err
+			}
+			if actionSlug == "on" && impulseCapableDevice(device) {
+				if err := p.publishButtonDiscoveryCleanup(ctx, deviceSlug, "impulse", "jeedom_removed_action_cleanup"); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (p *Publisher) beginDevicePublish(device Device) (func(), bool) {
@@ -658,6 +731,7 @@ func hasSIAIdentifier(identifiers []string) bool {
 func siaOwnedJeedomMetric(metric string) bool {
 	switch strings.ToLower(strings.TrimSpace(metric)) {
 	case "alarm", "alarm_active",
+		"smoke_alarm", "heat_alarm", "carbon_monoxide_alarm",
 		"tamper",
 		"trouble", "trouble_active",
 		"external_power",

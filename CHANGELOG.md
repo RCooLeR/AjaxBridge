@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Normalize the expanded Ajax Jeedom plugin contract for Button, SpaceControl, WaterStop, ReX, MultiTransmitter, LifeQuality, and FireProtect families, including diagnostic metadata, CO₂, timestamp conversion, valve position, and separate smoke/heat/CO alarms.
+- Prefer stable Jeedom logical/generic metadata and existing command-ID contracts over localized labels, migrate cached mappings on restart, and reconcile removed commands per owning eqLogic with persistent Home Assistant discovery cleanup retries.
+- Expand the admin matching view with canonical command details, linked/unlinked summaries, one-click numeric command-ID merging, and notification metrics discovered from the live Jeedom model.
 - Preserve action-only WallSwitch state across AjaxBridge restarts by publishing retained bridge state, persisting successful ON/OFF controls, and representing genuinely unknown state as unknown instead of OFF.
 - Seed an active WallSwitch from positive power/current telemetry when Jeedom discovery has no `Etat`/`realState` command, without treating zero load as proof that the relay is off.
 - Upgrade the bridge to Go 1.27, urfave/cli v3, Chi 5.3.2, Prometheus client 1.24.1, and current transitive modules; pin `govulncheck` through the Go tool directive and adopt context-aware CLI handlers, `WaitGroup.Go`, and modern slice iteration.

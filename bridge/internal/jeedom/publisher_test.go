@@ -127,6 +127,120 @@ func TestPublishDeviceCleansNeverValuedMeasurements(t *testing.T) {
 	}
 }
 
+func TestCleanupCommandsRemovesBothPossibleRetainedComponents(t *testing.T) {
+	mqtt := &recordingMQTT{}
+	publisher := NewPublisher(PublisherConfig{
+		Discovery:       true,
+		DiscoveryPrefix: "homeassistant",
+		DiscoveryNode:   "ajaxbridge",
+	}, mqtt)
+	command := Command{
+		CommandID: "369",
+		Metric:    "issue_count",
+		Component: ComponentSensor,
+	}
+
+	if err := publisher.CleanupCommands(t.Context(), []Command{command}); err != nil {
+		t.Fatal(err)
+	}
+	for _, component := range []string{ComponentSensor, ComponentBinarySensor} {
+		topic := "homeassistant/" + component + "/ajaxbridge/jeedom_cmd_369/config"
+		if payload, ok := mqtt.discovery[topic]; !ok || payload != "" || !mqtt.discoveryRetain[topic] {
+			t.Fatalf("cleanup %s = %q present=%v retain=%v", topic, payload, ok, mqtt.discoveryRetain[topic])
+		}
+	}
+}
+
+func TestPublishDeviceRetriesPersistedDiscoveryCleanups(t *testing.T) {
+	mqtt := &recordingMQTT{}
+	publisher := NewPublisher(PublisherConfig{
+		StateTopicPrefix: "ajaxbridge/jeedom",
+		Discovery:        true,
+		DiscoveryPrefix:  "homeassistant",
+		DiscoveryNode:    "ajaxbridge",
+		RetainDiscovery:  true,
+	}, mqtt)
+	device := Device{
+		Device:     "Remote",
+		DeviceSlug: "remote",
+		Values:     map[string]any{"issue_count": float64(0)},
+		RawCommands: map[string]Command{
+			"375": {
+				CommandID:      "375",
+				Device:         "Remote",
+				DeviceSlug:     "remote",
+				Name:           "Issue count",
+				Metric:         "issue_count",
+				Component:      ComponentSensor,
+				StateClass:     "measurement",
+				EntityCategory: "diagnostic",
+				Value:          float64(0),
+				LastValueAt:    time.Unix(100, 0),
+			},
+		},
+		PendingDiscoveryCleanups: []Command{{
+			CommandID: "369",
+			Metric:    "issue_count",
+			Component: ComponentSensor,
+		}},
+	}
+
+	if err := publisher.PublishDevice(t.Context(), device); err != nil {
+		t.Fatal(err)
+	}
+	for _, component := range []string{ComponentSensor, ComponentBinarySensor} {
+		topic := "homeassistant/" + component + "/ajaxbridge/jeedom_cmd_369/config"
+		if payload, ok := mqtt.discovery[topic]; !ok || payload != "" || !mqtt.discoveryRetain[topic] {
+			t.Fatalf("retry cleanup %s = %q present=%v retain=%v", topic, payload, ok, mqtt.discoveryRetain[topic])
+		}
+	}
+	if got := mqtt.discovery["homeassistant/sensor/ajaxbridge/jeedom_cmd_375/config"]; got == "" {
+		t.Fatal("current command discovery was not published after cleanup retry")
+	}
+}
+
+func TestPublishDeviceCleansOneRemovedButtonWhileKeepingOthers(t *testing.T) {
+	mqtt := &recordingMQTT{}
+	publisher := NewPublisher(PublisherConfig{
+		StateTopicPrefix: "ajaxbridge/jeedom",
+		Discovery:        true,
+		DiscoveryPrefix:  "homeassistant",
+		DiscoveryNode:    "ajaxbridge",
+		RetainDiscovery:  true,
+		Controls:         true,
+	}, mqtt)
+	device := Device{
+		Device:           "Hub",
+		DeviceSlug:       "hub",
+		JeedomDeviceType: "Hub",
+		Values:           map[string]any{},
+		RawCommands:      map[string]Command{},
+		Actions: map[string]Action{
+			"arm": {Action: "arm", CommandID: "163", Device: "Hub", DeviceSlug: "hub", Name: "Arm", Allowed: true},
+		},
+		PendingActionDiscoveryCleanups: []Action{{
+			Action:     "panic",
+			CommandID:  "166",
+			Device:     "Hub",
+			DeviceSlug: "hub",
+		}},
+	}
+
+	published, err := publisher.PublishDeviceWithResult(t.Context(), device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !published {
+		t.Fatal("current hub snapshot was unexpectedly skipped")
+	}
+	if payload, ok := mqtt.discovery["homeassistant/button/ajaxbridge/jeedom_control_hub_panic/config"]; !ok || payload != "" || !mqtt.discoveryRetain["homeassistant/button/ajaxbridge/jeedom_control_hub_panic/config"] {
+		t.Fatalf("panic cleanup = %q present=%v", payload, ok)
+	}
+	if got := mqtt.discovery["homeassistant/button/ajaxbridge/jeedom_control_hub_arm/config"]; got == "" {
+		t.Fatal("remaining arm button discovery was not published")
+	}
+}
+
 func TestFirstValidZeroMeasurementCausesRediscovery(t *testing.T) {
 	store := NewStore("keep_last")
 	discovered := store.ApplyDiscovery(Discovery{
@@ -579,7 +693,15 @@ func TestPublishDeviceCleansSIAMergedDuplicateCommands(t *testing.T) {
 		LinkedAccount: "A0F80D",
 		LinkedZone:    "4",
 		HAIdentifiers: []string{"ajaxbridge_A0F80D_zone_4"},
-		Values:        map[string]any{"temperature_c": 21.0},
+		Values: map[string]any{
+			"temperature_c":                  21.0,
+			"smoke_alarm":                    false,
+			"heat_alarm":                     false,
+			"critical_smoke_alarm":           false,
+			"rapid_temperature_rise_alarm":   false,
+			"carbon_monoxide_alarm":          false,
+			"critical_carbon_monoxide_alarm": false,
+		},
 		RawCommands: map[string]Command{
 			"134": {
 				CommandID: "134",
@@ -598,6 +720,12 @@ func TestPublishDeviceCleansSIAMergedDuplicateCommands(t *testing.T) {
 				Value:       21.0,
 				LastValueAt: time.Unix(100, 0),
 			},
+			"379": {CommandID: "379", Metric: "smoke_alarm", Component: ComponentBinarySensor, DeviceClass: "smoke", Value: false},
+			"380": {CommandID: "380", Metric: "heat_alarm", Component: ComponentBinarySensor, DeviceClass: "heat", Value: false},
+			"381": {CommandID: "381", Metric: "rapid_temperature_rise_alarm", Component: ComponentBinarySensor, DeviceClass: "heat", Value: false},
+			"382": {CommandID: "382", Metric: "carbon_monoxide_alarm", Component: ComponentBinarySensor, DeviceClass: "carbon_monoxide", Value: false},
+			"383": {CommandID: "383", Metric: "critical_carbon_monoxide_alarm", Component: ComponentBinarySensor, DeviceClass: "carbon_monoxide", Value: false},
+			"394": {CommandID: "394", Metric: "critical_smoke_alarm", Component: ComponentBinarySensor, DeviceClass: "smoke", Value: false},
 		},
 	}
 
@@ -616,6 +744,18 @@ func TestPublishDeviceCleansSIAMergedDuplicateCommands(t *testing.T) {
 	}
 	if got := mqtt.discovery["homeassistant/binary_sensor/ajaxbridge/jeedom_cmd_136/config"]; got != "" {
 		t.Fatalf("stale Jeedom temperature binary discovery = %q, want retained cleanup", got)
+	}
+	for _, commandID := range []string{"379", "380", "382"} {
+		topic := "homeassistant/binary_sensor/ajaxbridge/jeedom_cmd_" + commandID + "/config"
+		if got := mqtt.discovery[topic]; got != "" {
+			t.Fatalf("base SIA-owned fire alarm %s discovery = %q, want retained cleanup", commandID, got)
+		}
+	}
+	for _, commandID := range []string{"381", "383", "394"} {
+		topic := "homeassistant/binary_sensor/ajaxbridge/jeedom_cmd_" + commandID + "/config"
+		if got := mqtt.discovery[topic]; got == "" {
+			t.Fatalf("granular Jeedom fire alarm %s discovery missing", commandID)
+		}
 	}
 }
 
@@ -807,6 +947,41 @@ func TestPublisherRejectsOlderDeviceSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertRecordedPower(t, mqtt.state["ajaxbridge/jeedom/devices/server/state"], 2)
+}
+
+func TestPublishDeviceWithResultReportsSkippedStaleCleanup(t *testing.T) {
+	mqtt := &recordingMQTT{}
+	publisher := NewPublisher(PublisherConfig{
+		StateTopicPrefix: "ajaxbridge/jeedom",
+		Discovery:        true,
+		DiscoveryPrefix:  "homeassistant",
+		DiscoveryNode:    "ajaxbridge",
+	}, mqtt)
+	newer := Device{Device: "Remote", DeviceSlug: "remote", Values: map[string]any{}, publishRevision: 2}
+	older := Device{
+		Device:          "Remote",
+		DeviceSlug:      "remote",
+		Values:          map[string]any{},
+		publishRevision: 1,
+		PendingDiscoveryCleanups: []Command{{
+			CommandID: "369",
+			Metric:    "issue_count",
+			Component: ComponentSensor,
+		}},
+	}
+	if published, err := publisher.PublishDeviceWithResult(t.Context(), newer); err != nil || !published {
+		t.Fatalf("newer publish = %v, %v", published, err)
+	}
+	published, err := publisher.PublishDeviceWithResult(t.Context(), older)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if published {
+		t.Fatal("stale snapshot reported a successful publish")
+	}
+	if _, ok := mqtt.discovery["homeassistant/sensor/ajaxbridge/jeedom_cmd_369/config"]; ok {
+		t.Fatal("stale snapshot published its cleanup")
+	}
 }
 
 func TestPublisherRejectsUnversionedSnapshotAfterVersionedSnapshot(t *testing.T) {

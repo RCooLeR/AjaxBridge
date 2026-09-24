@@ -291,11 +291,7 @@ func (a *App) handleCatalogChanged(snapshot state.Snapshot) {
 		if a.jeedomPub != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), a.cfg.MQTTTimeout)
 			defer cancel()
-			for _, device := range devices {
-				if err := a.jeedomPub.PublishDevice(ctx, device); err != nil {
-					a.log.Debug().Err(err).Str("device", device.DeviceSlug).Msg("publish Jeedom device after catalog change")
-				}
-			}
+			a.publishJeedomDevices(ctx, devices, "publish Jeedom device after catalog change")
 		}
 	}
 	a.metrics.SetSnapshot(snapshot)
@@ -326,9 +322,24 @@ func (a *App) publishJeedomDevices(ctx context.Context, devices []jeedom.Device,
 	if a == nil || a.jeedomPub == nil {
 		return
 	}
+	acknowledgedCleanup := false
 	for _, device := range devices {
-		if err := a.jeedomPub.PublishDevice(ctx, device); err != nil {
+		published, err := a.jeedomPub.PublishDeviceWithResult(ctx, device)
+		if err != nil {
 			a.log.Debug().Err(err).Str("device", device.DeviceSlug).Msg(message)
+			continue
+		}
+		if a.jeedom != nil && published && a.jeedomPub.DiscoveryEnabled() {
+			commandsAcknowledged := a.jeedom.AcknowledgeCommandCleanups(device.PendingDiscoveryCleanups)
+			actionsAcknowledged := a.jeedom.AcknowledgeActionCleanups(device.PendingActionDiscoveryCleanups)
+			if commandsAcknowledged || actionsAcknowledged {
+				acknowledgedCleanup = true
+			}
+		}
+	}
+	if acknowledgedCleanup {
+		if err := a.jeedom.Save(ctx); err != nil {
+			a.log.Warn().Err(err).Msg("persist acknowledged Jeedom MQTT discovery cleanup")
 		}
 	}
 }

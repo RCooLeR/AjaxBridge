@@ -168,6 +168,40 @@ func TestLoadStoreAcceptsLegacyDeviceArray(t *testing.T) {
 	}
 }
 
+func TestLoadStorePreservesLegacyCommandContractAfterCustomRename(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jeedom.json")
+	if err := os.WriteFile(path, []byte(`[{
+	  "source":"jeedom",
+	  "device":"Server power",
+	  "device_slug":"server_power",
+	  "values":{"temperature_c":18.6},
+	  "raw_commands":{
+	    "57":{"command_id":"57","device":"Server power","device_slug":"server_power","name":"Rack inlet","raw_name":"Rack inlet","metric":"temperature_c","component":"sensor","type":"info","subtype":"numeric","unit":"°C","device_class":"temperature","state_class":"measurement","value":18.6}
+	  }
+	}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadStore(t.Context(), path, "keep_last", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, ok := store.Device("server_power")
+	if !ok {
+		t.Fatal("missing device loaded from legacy cache")
+	}
+	command := device.RawCommands["57"]
+	if command.Metric != "temperature_c" || command.Component != ComponentSensor || command.DeviceClass != "temperature" {
+		t.Fatalf("preserved command contract = %#v, want temperature sensor", command)
+	}
+	if got := device.Values["temperature_c"]; got != 18.6 {
+		t.Fatalf("temperature_c = %#v, want 18.6", got)
+	}
+	if _, exists := device.Values["rack_inlet_value"]; exists {
+		t.Fatalf("custom-name fallback survived restart migration: %#v", device.Values)
+	}
+}
+
 func TestSaveStoreRestoresActionMetadata(t *testing.T) {
 	path := t.TempDir() + "/jeedom.json"
 	store, err := LoadStore(t.Context(), path, "keep_last", nil)
@@ -193,5 +227,125 @@ func TestSaveStoreRestoresActionMetadata(t *testing.T) {
 	}
 	if action.CommandID != "85" || action.StateCommandID != "81" {
 		t.Fatalf("action = %#v, want command/state ids", action)
+	}
+}
+
+func TestLoadStoreMigratesExpandedJeedomCommandMappings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jeedom.json")
+	legacy := `[{
+	  "source":"jeedom",
+	  "device":"Fire detector",
+	  "device_slug":"fire_detector",
+	  "jeedom_id":"13",
+	  "jeedom_device_type":"FireProtect2HscAc",
+	  "values":{
+	    "alarme_fumee":"SMOKE_ALARM_NOT_DETECTED",
+	    "nombre_de_defauts_value":2,
+	    "derniere_mise_a_jour_value":1790208691
+	  },
+	  "raw_commands":{
+	    "379":{"command_id":"379","object":"House","device":"Fire detector","device_slug":"fire_detector","raw_name":"Alarme fumée","name":"Alarme fumée","metric":"alarme_fumee","component":"sensor","type":"info","subtype":"string","value":"SMOKE_ALARM_NOT_DETECTED"},
+	    "398":{"command_id":"398","object":"House","device":"Fire detector","device_slug":"fire_detector","raw_name":"Nombre de défauts","name":"Nombre de défauts","metric":"nombre_de_defauts_value","component":"sensor","type":"info","subtype":"numeric","value":2},
+	    "402":{"command_id":"402","object":"House","device":"Fire detector","device_slug":"fire_detector","raw_name":"Dernière mise à jour","name":"Dernière mise à jour","metric":"derniere_mise_a_jour_value","component":"sensor","type":"info","subtype":"numeric","unit":"s","value":1790208691}
+	  }
+	},{
+	  "source":"jeedom",
+	  "device":"Water valve",
+	  "device_slug":"water_valve",
+	  "jeedom_id":"21",
+	  "jeedom_device_type":"WaterStop",
+	  "values":{"etat_de_la_vanne":"INTERMEDIATE"},
+	  "raw_commands":{
+	    "414":{"command_id":"414","object":"Utility","device":"Water valve","device_slug":"water_valve","raw_name":"Etat de la vanne","name":"Etat de la vanne","metric":"etat_de_la_vanne","component":"sensor","type":"info","subtype":"string","value":"INTERMEDIATE"}
+	  }
+	}]`
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadStore(t.Context(), path, "keep_last", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fire, ok := store.Device("fire_detector")
+	if !ok {
+		t.Fatal("missing migrated fire detector")
+	}
+	if got := fire.Values["smoke_alarm"]; got != false {
+		t.Fatalf("smoke_alarm = %#v, want false", got)
+	}
+	if got := fire.Values["issue_count"]; got != float64(2) {
+		t.Fatalf("issue_count = %#v, want 2", got)
+	}
+	if got := fire.Values["device_last_update"]; got != "2026-09-24T00:11:31Z" {
+		t.Fatalf("device_last_update = %#v, want RFC3339 timestamp", got)
+	}
+	for _, obsolete := range []string{"alarme_fumee", "nombre_de_defauts_value", "derniere_mise_a_jour_value"} {
+		if _, exists := fire.Values[obsolete]; exists {
+			t.Fatalf("obsolete metric %q survived migration: %#v", obsolete, fire.Values)
+		}
+	}
+	if command := fire.RawCommands["379"]; command.Metric != "smoke_alarm" || command.Component != ComponentBinarySensor {
+		t.Fatalf("migrated smoke command = %#v", command)
+	}
+	if command := fire.RawCommands["402"]; command.DeviceClass != "timestamp" || command.Unit != "" {
+		t.Fatalf("migrated timestamp command = %#v", command)
+	}
+
+	valve, ok := store.Device("water_valve")
+	if !ok {
+		t.Fatal("missing migrated WaterStop")
+	}
+	if got := valve.Values["valve_position"]; got != "INTERMEDIATE" {
+		t.Fatalf("valve_position = %#v, want INTERMEDIATE", got)
+	}
+	if got, exists := valve.Values["state"]; !exists || got != nil {
+		t.Fatalf("derived intermediate state = %#v present=%v, want nil", got, exists)
+	}
+	if _, exists := valve.Values["etat_de_la_vanne"]; exists {
+		t.Fatalf("obsolete valve metric survived migration: %#v", valve.Values)
+	}
+}
+
+func TestPendingDiscoveryCleanupSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jeedom.json")
+	store, err := LoadStore(t.Context(), path, "keep_last", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.ApplyDiscovery(Discovery{
+		EqLogicID: "20",
+		Name:      "Remote",
+		InfoCommands: map[string]DiscoveryCommand{
+			"369": {CommandID: "369", EqLogicID: "20", Name: "Nombre de défauts", Type: "info", Subtype: "numeric", Value: []byte(`1`)},
+		},
+		Actions: map[string]DiscoveryCommand{
+			"900": {CommandID: "900", EqLogicID: "20", LogicalID: "PANIC", Name: "Panic", Type: "action"},
+		},
+	})
+	store.ApplyDiscovery(Discovery{
+		EqLogicID: "20",
+		Name:      "Remote",
+		InfoCommands: map[string]DiscoveryCommand{
+			"375": {CommandID: "375", EqLogicID: "20", Name: "Nombre de défauts", Type: "info", Subtype: "numeric", Value: []byte(`0`)},
+		},
+	})
+	if err := store.Save(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := LoadStore(t.Context(), path, "keep_last", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, ok := restarted.Device("remote")
+	if !ok {
+		t.Fatal("missing restarted remote")
+	}
+	if len(device.PendingDiscoveryCleanups) != 1 || device.PendingDiscoveryCleanups[0].CommandID != "369" {
+		t.Fatalf("pending cleanup after restart = %#v, want command 369", device.PendingDiscoveryCleanups)
+	}
+	if len(device.PendingActionDiscoveryCleanups) != 1 || device.PendingActionDiscoveryCleanups[0].CommandID != "900" {
+		t.Fatalf("pending action cleanup after restart = %#v, want action 900", device.PendingActionDiscoveryCleanups)
 	}
 }

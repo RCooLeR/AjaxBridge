@@ -138,6 +138,112 @@ func TestServiceRetainedStateCannotRegressFromOutOfOrderHandlers(t *testing.T) {
 	assertRecordedPower(t, mqtt.state["ajaxbridge/jeedom/devices/server/state"], 2)
 }
 
+func TestServiceAcknowledgesCommandCleanupOnlyWhenDiscoveryIsPublished(t *testing.T) {
+	for _, discoveryEnabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "disabled", true: "enabled"}[discoveryEnabled], func(t *testing.T) {
+			store := NewStore("keep_last")
+			store.ApplyDiscovery(Discovery{
+				EqLogicID: "20",
+				Name:      "Remote",
+				InfoCommands: map[string]DiscoveryCommand{
+					"369": {CommandID: "369", EqLogicID: "20", Name: "Nombre de défauts", Type: "info", Subtype: "numeric", Value: []byte(`1`)},
+				},
+				Actions: map[string]DiscoveryCommand{
+					"900": {CommandID: "900", EqLogicID: "20", LogicalID: "PANIC", Name: "Panic", Type: "action"},
+				},
+			})
+			mqtt := &recordingMQTT{}
+			publisher := NewPublisher(PublisherConfig{
+				StateTopicPrefix: "ajaxbridge/jeedom",
+				Discovery:        discoveryEnabled,
+				DiscoveryPrefix:  "homeassistant",
+				DiscoveryNode:    "ajaxbridge",
+			}, mqtt)
+			service := NewService(ServiceConfig{}, store, nil, publisher, nil, nil, zerolog.Nop())
+
+			service.HandleMessage(t.Context(), "jeedom/discovery/eqLogic/20", []byte(`{
+			  "id":20,
+			  "name":"Remote",
+			  "cmds":{
+			    "375":{"id":375,"name":"Nombre de défauts","type":"info","subType":"numeric","currentValue":0}
+			  }
+			}`))
+
+			device, ok := store.Device("remote")
+			if !ok {
+				t.Fatal("missing Remote after refreshed discovery")
+			}
+			if discoveryEnabled {
+				if len(device.PendingDiscoveryCleanups) != 0 {
+					t.Fatalf("published cleanup remains queued: %#v", device.PendingDiscoveryCleanups)
+				}
+				if len(device.PendingActionDiscoveryCleanups) != 0 {
+					t.Fatalf("published action cleanup remains queued: %#v", device.PendingActionDiscoveryCleanups)
+				}
+				if payload, ok := mqtt.discovery["homeassistant/sensor/ajaxbridge/jeedom_cmd_369/config"]; !ok || payload != "" {
+					t.Fatalf("cleanup publish = %q present=%v", payload, ok)
+				}
+				if payload, ok := mqtt.discovery["homeassistant/button/ajaxbridge/jeedom_control_remote_panic/config"]; !ok || payload != "" {
+					t.Fatalf("action cleanup publish = %q present=%v", payload, ok)
+				}
+			} else {
+				if len(device.PendingDiscoveryCleanups) != 1 || device.PendingDiscoveryCleanups[0].CommandID != "369" {
+					t.Fatalf("disabled discovery lost pending cleanup: %#v", device.PendingDiscoveryCleanups)
+				}
+				if len(device.PendingActionDiscoveryCleanups) != 1 || device.PendingActionDiscoveryCleanups[0].CommandID != "900" {
+					t.Fatalf("disabled discovery lost pending action cleanup: %#v", device.PendingActionDiscoveryCleanups)
+				}
+			}
+		})
+	}
+}
+
+func TestServiceAcknowledgesPreviouslyQueuedCleanupAfterValueEvent(t *testing.T) {
+	store := NewStore("keep_last")
+	store.ApplyDiscovery(Discovery{
+		EqLogicID: "20",
+		Name:      "Remote",
+		InfoCommands: map[string]DiscoveryCommand{
+			"369": {CommandID: "369", EqLogicID: "20", Name: "Nombre de défauts", Type: "info", Subtype: "numeric", Value: []byte(`1`)},
+		},
+	})
+	store.ApplyDiscovery(Discovery{
+		EqLogicID: "20",
+		Name:      "Remote",
+		InfoCommands: map[string]DiscoveryCommand{
+			"375": {CommandID: "375", EqLogicID: "20", Name: "Nombre de défauts", Type: "info", Subtype: "numeric", Value: []byte(`0`)},
+		},
+	})
+	queued, _ := store.Device("remote")
+	if len(queued.PendingDiscoveryCleanups) != 1 {
+		t.Fatalf("setup pending cleanups = %#v", queued.PendingDiscoveryCleanups)
+	}
+
+	mqtt := &recordingMQTT{}
+	publisher := NewPublisher(PublisherConfig{
+		StateTopicPrefix: "ajaxbridge/jeedom",
+		Discovery:        true,
+		DiscoveryPrefix:  "homeassistant",
+		DiscoveryNode:    "ajaxbridge",
+	}, mqtt)
+	service := NewService(ServiceConfig{}, store, nil, publisher, nil, nil, zerolog.Nop())
+	service.HandleMessage(t.Context(), "jeedom/cmd/event/375", []byte(`{
+	  "value":0,
+	  "humanName":"[House][Remote][Nombre de défauts]",
+	  "name":"Nombre de défauts",
+	  "type":"info",
+	  "subtype":"numeric"
+	}`))
+
+	device, _ := store.Device("remote")
+	if len(device.PendingDiscoveryCleanups) != 0 {
+		t.Fatalf("successful event publish did not acknowledge old cleanup: %#v", device.PendingDiscoveryCleanups)
+	}
+	if payload, ok := mqtt.discovery["homeassistant/sensor/ajaxbridge/jeedom_cmd_369/config"]; !ok || payload != "" {
+		t.Fatalf("retried cleanup = %q present=%v", payload, ok)
+	}
+}
+
 func TestServiceObservesExternalJeedomSetCommand(t *testing.T) {
 	store := NewStore("keep_last")
 	discovery, err := ParseDiscoveryMessage("jeedom/discovery/eqLogic/10", []byte(relayDiscoveryPayload), time.Unix(100, 0))

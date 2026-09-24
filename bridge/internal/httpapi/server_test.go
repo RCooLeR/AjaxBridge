@@ -54,6 +54,53 @@ func TestLogoServesFile(t *testing.T) {
 	}
 }
 
+func TestAdminHTMLIncludesExpandedJeedomMatching(t *testing.T) {
+	for _, want := range []string{
+		`id="matchingSummary"`,
+		`Canonical metric`,
+		`HA component / class`,
+		`Current value`,
+		`Name / raw`,
+		`Diagnostic`,
+		`Unlinked`,
+		`command.visible`,
+		`command.historized`,
+		`function mergeJeedomCommandIDs(deviceSlug)`,
+		`(model.jeedom_actions || []).forEach(function(action)`,
+		`Control action`,
+		`model.devices = collectDevices()`,
+		`catalogDevice.jeedom_command_ids = mergedIDs`,
+		`return /^\d+$/.test`,
+		`Press Save catalog to persist`,
+	} {
+		if !strings.Contains(adminHTML, want) {
+			t.Errorf("admin HTML is missing %q", want)
+		}
+	}
+}
+
+func TestAdminHTMLBuildsNotificationMetricsFromDefaultsAndCommands(t *testing.T) {
+	for _, want := range []string{
+		`CORE_NOTIFICATION_METRICS`,
+		`'issue_count'`,
+		`'co2_ppm'`,
+		`'device_last_update'`,
+		`'alarm'`,
+		`'valve'`,
+		`'battery_percent'`,
+		`'battery_state'`,
+		`'status'`,
+		`(model.jeedom_commands || []).forEach(discover)`,
+		`Object.values(device.raw_commands || {}).forEach(discover)`,
+		`add(selected)`,
+		`notificationMetricOptions(rule.metric)`,
+	} {
+		if !strings.Contains(adminHTML, want) {
+			t.Errorf("admin HTML is missing %q", want)
+		}
+	}
+}
+
 func chdir(t *testing.T, dir string) {
 	t.Helper()
 	oldwd, err := os.Getwd()

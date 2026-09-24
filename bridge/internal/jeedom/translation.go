@@ -38,7 +38,7 @@ func EnglishActionName(action, rawName string) string {
 }
 
 func translateCommandLabel(value string) string {
-	switch commandKey(value) {
+	switch canonicalCommandKey(commandKey(value)) {
 	case "puissance", "power":
 		return "Power"
 	case "consommation", "energy", "consumption":
@@ -59,6 +59,8 @@ func translateCommandLabel(value string) string {
 		return "Cellular signal strength"
 	case "humidite", "humidity":
 		return "Humidity"
+	case "co2":
+		return "Carbon dioxide"
 	case "etat", "state", "status":
 		return "State"
 	case "sourceevenement", "eventsource":
@@ -89,6 +91,74 @@ func translateCommandLabel(value string) string {
 		return "Door"
 	case "fuite", "leak":
 		return "Leak"
+	case "issuecount":
+		return "Issue count"
+	case "firmwareversion":
+		return "Firmware version"
+	case "operatingmode":
+		return "Operating mode"
+	case "operatingstate":
+		return "Operating state"
+	case "batterycheckstatus":
+		return "Battery check status"
+	case "lastupdate":
+		return "Last update"
+	case "valveposition":
+		return "Valve position"
+	case "smokealarm":
+		return "Smoke alarm"
+	case "criticalsmokealarm":
+		return "Critical smoke alarm"
+	case "heatalarm":
+		return "Heat alarm"
+	case "rapidtemperaturerisealarm":
+		return "Rapid temperature rise alarm"
+	case "carbonmonoxidealarm":
+		return "Carbon monoxide alarm"
+	case "criticalcarbonmonoxidealarm":
+		return "Critical carbon monoxide alarm"
+	case "radioconnection":
+		return "Radio connection"
+	case "photochannelconnection":
+		return "Photo channel connection"
+	case "photochannelsignal":
+		return "Photo channel signal"
+	case "ethernetenabled":
+		return "Ethernet enabled"
+	case "ethernetconnected":
+		return "Ethernet connected"
+	case "jewellerantennastatus":
+		return "Jeweller antenna status"
+	case "wingsantennastatus":
+		return "Wings antenna status"
+	case "batterycharging":
+		return "Battery charging"
+	case "batteryfault":
+		return "Battery fault"
+	case "detectorpowerfault":
+		return "Detector power fault"
+	case "firedetectorpowerfault":
+		return "Fire detector power fault"
+	case "detectorpowerundervoltage":
+		return "Detector power undervoltage"
+	case "firedetectorpowerundervoltage":
+		return "Fire detector power undervoltage"
+	case "fibrapowertest":
+		return "Fibra power test"
+	case "chargerfault":
+		return "Charger fault"
+	case "chargerfaults":
+		return "Charger faults"
+	case "batterychargerfaults":
+		return "Battery and charger faults"
+	case "datachannelstatus":
+		return "Data channel status"
+	case "datachannelsignal":
+		return "Data channel signal"
+	case "detectorsupplystate":
+		return "Detector supply state"
+	case "firedetectorsupplystate":
+		return "Fire detector supply state"
 	case "armement", "arm":
 		return "Arm"
 	case "modenuit", "nightmode":

@@ -275,6 +275,7 @@ Known Jeedom command labels are translated to English before being exposed to Ho
 | numeric `Signal`, `RSSI` | `Signal` | `signal_dbm` |
 | string `Signal` | `Signal` | `signal_level` |
 | `Humidite` | `Humidity` | `humidity_percent` |
+| `CO2`, `Carbon dioxide` | `Carbon dioxide` | `co2_ppm` |
 | `Etat` | `State` | `state` |
 | `En ligne` | `Online` | `online` |
 | `Trafique`, `Tamper`, `Sabotage` | `Tamper` | `tamper` |
@@ -287,6 +288,25 @@ Known Jeedom command labels are translated to English before being exposed to Ho
 | `Source evenement` | `Event source` | `event_source` |
 | `Evenement` | `Event` | `event` |
 | `Code evenement` | `Event code` | `event_code` |
+| `Nombre de defauts` | `Issue count` | `issue_count` |
+| `Version du firmware` | `Firmware version` | `firmware_version` |
+| `Mode`, `Operating mode` | `Operating mode` | `operating_mode` |
+| `Operating state`, `Etat de fonctionnement` | `Operating state` | `operating_state` |
+| `Etat du controle de batterie` | `Battery check status` | `battery_check_status` |
+| `Derniere mise a jour` | `Last update` | `device_last_update` |
+| `Etat de la vanne` | `Valve position` | `valve_position` |
+| `Alarme fumee` | `Smoke alarm` | `smoke_alarm` |
+| `Alarme fumee critique` | `Critical smoke alarm` | `critical_smoke_alarm` |
+| `Alarme temperature` | `Heat alarm` | `heat_alarm` |
+| `Alarme hausse rapide de temperature` | `Rapid temperature rise alarm` | `rapid_temperature_rise_alarm` |
+| `Alarme CO` | `Carbon monoxide alarm` | `carbon_monoxide_alarm` |
+| `Alarme CO critique` | `Critical carbon monoxide alarm` | `critical_carbon_monoxide_alarm` |
+
+ReX, ReX 2, Superior ReX, MultiTransmitter, MultiTransmitter Fibra, and Superior MultiTransmitter diagnostics are also normalized into stable radio/photo/Ethernet connectivity, antenna, charging, power-fault, undervoltage, Fibra-test, data-channel, detector-supply, and charger-fault metrics. Numeric photo/data-channel signal values use Home Assistant `signal_strength`/`measurement` metadata; textual quality values remain diagnostic strings.
+
+When the Jeedom plugin supplies stable `logicalId` or `generic_type` metadata, AjaxBridge gives it precedence over localized display labels. `TEMPERATURE`, `HUMIDITY`, `CO2`, and `BATTERY` contracts therefore remain stable even if a command is renamed. Existing command IDs keep their discovered canonical mapping on later value-only events.
+
+`device_last_update` accepts Unix seconds, milliseconds, microseconds, or nanoseconds and is exposed as a UTC RFC3339 Home Assistant timestamp. It is intentionally distinct from the state envelope's bridge-generated `last_update`. Fire enum values ending in `_DETECTED`/`_NOT_DETECTED` become booleans. WaterStop keeps the exact `valve_position` text and derives the existing control `state` only for unambiguous open/closed values.
 
 Known French string values are also normalized:
 
