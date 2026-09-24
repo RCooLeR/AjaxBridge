@@ -109,7 +109,16 @@ const deviceImageMap: DeviceImageEntry[] = [
     pattern: /fireprotect\s*plus|fireprotect_plus/,
     fileName: (descriptor) => colorVariantImage(descriptor, 'FireProtectPlus_white.png', 'FireProtectPlus_black.png'),
   },
-  { pattern: /spacecontrol|space control|ajax_spacecontrol|panic_button/, fileName: jeedomDeviceImage('SpaceControl_white.png') },
+  { pattern: /spacecontrol|space control|ajax_spacecontrol/, fileName: jeedomDeviceImage('SpaceControl_white.png') },
+  {
+    pattern: /double\s*button|doublebutton/,
+    fileName: (descriptor) =>
+      colorVariantImage(descriptor, 'DoubleButton_white.png', 'DoubleButton_black.png'),
+  },
+  {
+    pattern: /\bbutton(?:\s+s|s)?\b|panic_button/,
+    fileName: (descriptor) => colorVariantImage(descriptor, 'Button_white.png', 'Button_black.png'),
+  },
   { pattern: /waterstop|water stop|valve/, fileName: jeedomDeviceImage('WaterStop.png') },
   {
     pattern: /multi\s*transmitter|multitransmitter|multi_transmitter/,

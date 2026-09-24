@@ -12,6 +12,11 @@ Source URL pattern:
 
 `https://jdm.rcooler.org/plugins/ajaxSystem/core/config/devices/<file>.png`
 
+`Button_*` and `DoubleButton_*` are official transparent Ajax catalog images because the Jeedom image set does not include those models:
+
+- `https://www.ajax-systems.uz/wp-content/themes/ajax/assets/images/template/catalog/products/Button_<color>@1x.png`
+- `https://www.ajax-systems.uz/wp-content/themes/ajax/assets/images/template/catalog/products/doublebutton_<color>@1x.png`
+
 ## Dahua Cameras
 
 Path: `dahua/`
