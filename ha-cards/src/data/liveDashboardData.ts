@@ -20,6 +20,13 @@ import type {
 } from '../models/dashboard';
 import { dashboardData as fallbackDashboardData } from './loadDashboardData';
 import type { HomeAssistant, HomeAssistantState } from '../ha/types';
+import {
+  classifyAjaxDiagnosticMetric,
+  controlStateLabel,
+  inferAjaxButtonDeviceType,
+  isPhysicalAjaxButtonType,
+  resolveDeviceControlState,
+} from '../utils/deviceSemantics';
 
 interface HomeAssistantArea {
   area_id: string;
@@ -146,6 +153,11 @@ interface DeviceMetricOptions {
   calculatePowerFromVoltageCurrent?: boolean;
 }
 
+interface DeviceActionContext {
+  deviceType?: string;
+  linkedEntries?: HomeAssistantEntityEntry[];
+}
+
 interface ClimateSample {
   value: number;
   unit: string;
@@ -156,6 +168,7 @@ const AJAX_HINT = /(ajaxbridge|ajax)/i;
 const LEGACY_AJAX2PROM_HINT = /ajax2prometheus/i;
 const GO2RTC_HINT = /go2rtc/i;
 const VTO_DEBUG_HINT = /(vto|doorbell|bell|дзвінок|вызывная|calling panel)/i;
+const MAX_DEVICE_METRICS = 12;
 const DAHUA_ENTITY_DOMAINS = new Set(['camera', 'image', 'sensor', 'binary_sensor', 'switch', 'lock']);
 const EMPTY_REGISTRIES: RegistrySnapshot = {
   areas: [],
@@ -453,7 +466,9 @@ function buildAjaxDevices(
       entityIds: linkedEntities.map((entry) => entry.entity_id),
     });
     const eventType = mapSignalToEventType(alarmSignal || lastSignal, alarmActive, offline);
-    const actions = buildDeviceActions(actionEntries, states);
+    const actions = isPhysicalAjaxButtonType(type)
+      ? undefined
+      : buildDeviceActions(actionEntries, states, { deviceType: type, linkedEntries: linkedEntities });
     const metrics = buildDeviceMetrics(
       linkedEntities,
       states,
@@ -1644,9 +1659,11 @@ function buildHeroMedia(
 function buildDeviceActions(
   entries: HomeAssistantEntityEntry[],
   states: Record<string, HomeAssistantState>,
+  context: DeviceActionContext = {},
 ): DeviceAction[] | undefined {
+  const valvePosition = readValvePosition(context.linkedEntries ?? [], states);
   const actions = entries
-    .map((entry) => buildDeviceAction(entry, states[entry.entity_id]))
+    .map((entry) => buildDeviceAction(entry, states[entry.entity_id], context.deviceType, valvePosition))
     .filter((action): action is DeviceAction => action !== null)
     .sort(sortDeviceActions);
 
@@ -1656,6 +1673,8 @@ function buildDeviceActions(
 function buildDeviceAction(
   entry: HomeAssistantEntityEntry,
   state?: HomeAssistantState,
+  deviceType?: string,
+  valvePosition?: string,
 ): DeviceAction | null {
   const domain = entityDomain(entry.entity_id);
   if (domain !== 'button' && domain !== 'switch' && domain !== 'lock' && domain !== 'valve') {
@@ -1663,8 +1682,12 @@ function buildDeviceAction(
   }
 
   const semantic = actionSemantic(entry, state);
-  const label = actionLabel(entry, state, semantic);
-  const service = actionService(domain, state, semantic);
+  const valveSemantics = domain === 'valve' || deviceType === 'waterstop';
+  const controlState = domain === 'switch' || domain === 'valve' || domain === 'lock'
+    ? resolveDeviceControlState({ domain, rawState: state?.state, deviceType, valvePosition })
+    : undefined;
+  const label = actionLabel(entry, state, semantic, controlState, valveSemantics);
+  const service = actionService(domain, semantic, controlState);
   if (!label || !service) {
     return null;
   }
@@ -1675,8 +1698,27 @@ function buildDeviceAction(
     label,
     domain,
     service,
-    stateLabel: state ? humanizeHomeAssistantState(state) : undefined,
+    stateLabel: controlState ? controlStateLabel(controlState, valveSemantics) : state ? humanizeHomeAssistantState(state) : undefined,
+    controlState,
   };
+}
+
+function readValvePosition(
+  entries: HomeAssistantEntityEntry[],
+  states: Record<string, HomeAssistantState>,
+): string | undefined {
+  for (const entry of entries) {
+    const state = states[entry.entity_id];
+    if (!state) {
+      continue;
+    }
+    const descriptor = entityDescriptorText(entry, state);
+    const deviceClass = safeString(state.attributes.device_class);
+    if (classifyAjaxDiagnosticMetric(descriptor, deviceClass) === 'valve_position') {
+      return state.state;
+    }
+  }
+  return undefined;
 }
 
 function actionSemantic(
@@ -1703,6 +1745,8 @@ function actionLabel(
   entry: HomeAssistantEntityEntry,
   state: HomeAssistantState | undefined,
   semantic: 'open_door' | 'hang_up' | 'answer' | 'mute' | 'generic',
+  controlState?: DeviceAction['controlState'],
+  valveSemantics = false,
 ): string {
   switch (semantic) {
     case 'open_door':
@@ -1715,13 +1759,16 @@ function actionLabel(
       return 'Mute';
     default: {
       if (entityDomain(entry.entity_id) === 'lock') {
-        return safeString(state?.state).toLowerCase() === 'unlocked' ? 'Lock door' : 'Unlock';
+        return controlState === 'on' ? 'Lock door' : 'Unlock';
+      }
+      if (valveSemantics) {
+        return controlState === 'on' ? 'Close' : 'Open';
       }
       if (entityDomain(entry.entity_id) === 'switch') {
-        return safeString(state?.state).toLowerCase() === 'on' ? 'Turn off' : 'Turn on';
+        return controlState === 'on' ? 'Turn off' : 'Turn on';
       }
       if (entityDomain(entry.entity_id) === 'valve') {
-        return safeString(state?.state).toLowerCase() === 'open' ? 'Close' : 'Open';
+        return controlState === 'on' ? 'Close' : 'Open';
       }
       return entityDisplayName(entry, state);
     }
@@ -1730,22 +1777,22 @@ function actionLabel(
 
 function actionService(
   domain: DeviceActionDomain,
-  state: HomeAssistantState | undefined,
   semantic: 'open_door' | 'hang_up' | 'answer' | 'mute' | 'generic',
+  controlState?: DeviceAction['controlState'],
 ): string {
   if (domain === 'button') {
     return 'press';
   }
   if (domain === 'lock') {
-    return safeString(state?.state).toLowerCase() === 'unlocked' && semantic === 'generic' ? 'lock' : 'unlock';
+    return controlState === 'on' && semantic === 'generic' ? 'lock' : 'unlock';
   }
   if (domain === 'valve') {
-    return safeString(state?.state).toLowerCase() === 'open' ? 'close_valve' : 'open_valve';
+    return controlState === 'on' ? 'close_valve' : 'open_valve';
   }
   if (semantic !== 'generic') {
     return 'turn_on';
   }
-  return safeString(state?.state).toLowerCase() === 'on' ? 'turn_off' : 'turn_on';
+  return controlState === 'on' ? 'turn_off' : 'turn_on';
 }
 
 function sortDeviceActions(left: DeviceAction, right: DeviceAction): number {
@@ -1800,7 +1847,7 @@ function buildDeviceMetrics(
 
   const metrics = dedupeMetrics(sourceMetrics)
     .sort((left, right) => left.priority - right.priority || left.label.localeCompare(right.label))
-    .slice(0, 8)
+    .slice(0, MAX_DEVICE_METRICS)
     .map(({ kind: _kind, priority: _priority, ...metric }) => metric);
 
   return metrics.length > 0 ? metrics : undefined;
@@ -2025,6 +2072,85 @@ function sensorMetricCandidate(
   text: string,
 ): MetricCandidate | null {
   const unit = safeString(state.attributes.unit_of_measurement);
+  const diagnosticKind = classifyAjaxDiagnosticMetric(text, deviceClass);
+
+  if (diagnosticKind === 'valve_position') {
+    const controlState = resolveDeviceControlState({
+      deviceType: 'waterstop',
+      domain: 'valve',
+      valvePosition: state.state,
+    });
+    return {
+      id: `metric:${entry.entity_id}`,
+      kind: diagnosticKind,
+      label: 'Valve position',
+      value: controlStateLabel(controlState, true),
+      icon: { category: 'devices', key: 'waterstop' },
+      tone: ['opening', 'closing', 'intermediate', 'moving'].includes(controlState) ? 'amber' : controlState === 'unknown' ? 'slate' : 'cyan',
+      priority: 19,
+    };
+  }
+
+  if (diagnosticKind === 'issue_count') {
+    const issueCount = parseStateNumber(state);
+    return {
+      id: `metric:${entry.entity_id}`,
+      kind: diagnosticKind,
+      label: 'Issues',
+      value: formatSensorState(state, '', 0),
+      icon: { category: 'system-states', key: issueCount === 0 ? 'ok' : 'trouble' },
+      tone: issueCount === 0 ? 'green' : 'amber',
+      priority: 16,
+    };
+  }
+
+  if (diagnosticKind === 'battery_check_status') {
+    return {
+      id: `metric:${entry.entity_id}`,
+      kind: diagnosticKind,
+      label: 'Battery check',
+      value: humanizeHomeAssistantState(state),
+      icon: { category: 'sensors', key: 'battery' },
+      tone: stateLooksNominal(state) ? 'green' : 'amber',
+      priority: 32,
+    };
+  }
+
+  if (diagnosticKind === 'operating_mode') {
+    return {
+      id: `metric:${entry.entity_id}`,
+      kind: diagnosticKind,
+      label: 'Mode',
+      value: humanizeSlug(state.state),
+      icon: { category: 'devices', key: 'panic_button' },
+      tone: 'cyan',
+      priority: 45,
+    };
+  }
+
+  if (diagnosticKind === 'firmware_version') {
+    return {
+      id: `metric:${entry.entity_id}`,
+      kind: diagnosticKind,
+      label: 'Firmware',
+      value: state.state,
+      icon: { category: 'misc', key: 'info' },
+      tone: 'slate',
+      priority: 70,
+    };
+  }
+
+  if (diagnosticKind === 'device_last_update') {
+    return {
+      id: `metric:${entry.entity_id}`,
+      kind: diagnosticKind,
+      label: 'Device updated',
+      value: formatTimestampMetric(state.state),
+      icon: { category: 'misc', key: 'history' },
+      tone: 'slate',
+      priority: 75,
+    };
+  }
 
   if (deviceClass === 'temperature' || matchesMetricName(text, ['temperature', 'temp', 'temperature_c'])) {
     return {
@@ -2452,6 +2578,15 @@ function formatShortDateTime(value: string): string {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(parsed));
+}
+
+function formatTimestampMetric(value: string): string {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    const milliseconds = numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+    return formatShortDateTime(new Date(milliseconds).toISOString());
+  }
+  return formatShortDateTime(value);
 }
 
 function parseStateNumber(state?: HomeAssistantState): number | null {
@@ -3117,6 +3252,10 @@ function sortRooms(left: Room, right: Room): number {
 
 function inferDeviceType(input: { name: string; model: string; entityIds: string[] }): string {
   const haystack = `${input.name} ${input.model} ${input.entityIds.join(' ')}`.toLowerCase();
+  const buttonType = inferAjaxButtonDeviceType(input.model);
+  if (buttonType) {
+    return buttonType;
+  }
   if (haystack.includes('vto') || haystack.includes('doorbell')) {
     return 'camera';
   }
@@ -3193,6 +3332,9 @@ function iconForDevice(type: string, name: string, model: string): IconRef {
   }
   if (lowered.includes('hub')) {
     return { category: 'devices', key: 'hub' };
+  }
+  if (type === 'panic_button' || inferAjaxButtonDeviceType(model)) {
+    return { category: 'devices', key: 'panic_button' };
   }
   if (lowered.includes('multitransmitter') || lowered.includes('multi transmitter')) {
     return { category: 'devices', key: 'multitransmitter' };

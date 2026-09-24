@@ -102,9 +102,12 @@ export interface DeviceAction {
   domain: DeviceActionDomain;
   service: string;
   stateLabel?: string;
+  controlState?: DeviceControlState;
 }
 
 export type DeviceActionDomain = 'button' | 'switch' | 'lock' | 'valve';
+
+export type DeviceControlState = 'on' | 'off' | 'opening' | 'closing' | 'intermediate' | 'moving' | 'unknown';
 
 export type CameraStreamProfile = 'main' | 'sub';
 

@@ -1139,6 +1139,17 @@
   transform: translateX(18px);
 }
 
+.ajax-device-item__toggle--indeterminate .ajax-device-item__toggle-track {
+  background: rgba(255, 209, 102, 0.28);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 209, 102, 0.26),
+    0 0 14px rgba(255, 209, 102, 0.12);
+}
+
+.ajax-device-item__toggle--indeterminate .ajax-device-item__toggle-thumb {
+  transform: translateX(9px);
+}
+
 .ajax-device-item__impulse {
   display: grid;
   place-items: center;

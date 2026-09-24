@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
-import type { Device, DeviceActionDomain, EventItem } from '../models/dashboard';
+import type { Device, DeviceActionDomain, DeviceControlState, EventItem } from '../models/dashboard';
 import type { HomeAssistant } from '../ha/types';
 import { Icon } from '../components/Icon';
 import { callEntityService } from '../ha/services';
 import { getDeviceImageAsset, getToneClass } from '../utils/assets';
+import { controlStateLabel, deviceControlAccessibility, selectSidebarMetrics } from '../utils/deviceSemantics';
 import { formatEventStamp } from '../utils/format';
 
 interface RoomWorkspaceSidebarProps {
@@ -18,8 +19,6 @@ type SidebarTab = 'devices' | 'events';
 
 const DAHUA_EVENT_TYPES = new Set(['human_detected', 'vehicle_detected', 'tripwire_detected', 'intrusion_detected']);
 const AJAX_EVENT_TYPES = new Set(['alarm', 'armed', 'disarmed', 'turn_on', 'turn_off', 'impulse']);
-const USEFUL_METRIC_LABELS = new Set(['temperature', 'voltage', 'current', 'power']);
-
 export function RoomWorkspaceSidebar({
   devices,
   events,
@@ -80,14 +79,22 @@ interface AjaxDeviceListItemProps {
 
 function AjaxDeviceListItem({ device, selected, onSelect, hass }: AjaxDeviceListItemProps) {
   const [pending, setPending] = useState(false);
-  const metrics = (device.metrics ?? []).filter((metric) => USEFUL_METRIC_LABELS.has(metric.label.toLowerCase()));
+  const metrics = selectSidebarMetrics(device.metrics ?? []);
   const toggleAction = getToggleAction(device);
   const impulseAction = getImpulseAction(device);
   const buttonActions = getButtonActions(device);
-  const isOn = deviceLooksOn(device);
-  const toggleLabel = toggleAction?.domain === 'valve'
-    ? isOn ? 'Open' : 'Closed'
-    : isOn ? 'On' : 'Off';
+  const controlState = getDeviceControlState(device);
+  const isOn = controlState === 'on';
+  const isIndeterminate = controlState !== 'on' && controlState !== 'off';
+  const toggleLabel = controlStateLabel(controlState, isWaterStopDevice(device));
+  const toggleAccessibility = toggleAction
+    ? deviceControlAccessibility({
+      actionLabel: toggleAction.label,
+      deviceName: device.name,
+      state: controlState,
+      stateLabel: toggleLabel,
+    })
+    : null;
 
   async function callAction(action: { domain: DeviceActionDomain; service: string; entityId: string }) {
     if (!hass?.callService) {
@@ -143,9 +150,15 @@ function AjaxDeviceListItem({ device, selected, onSelect, hass }: AjaxDeviceList
           {toggleAction ? (
             <button
               type="button"
-              className={['ajax-device-item__toggle', isOn ? 'ajax-device-item__toggle--on' : ''].join(' ')}
-              role="switch"
-              aria-checked={isOn}
+              className={[
+                'ajax-device-item__toggle',
+                isOn ? 'ajax-device-item__toggle--on' : '',
+                isIndeterminate ? 'ajax-device-item__toggle--indeterminate' : '',
+              ].join(' ')}
+              role={toggleAccessibility?.role}
+              aria-checked={toggleAccessibility?.ariaChecked}
+              aria-label={toggleAccessibility?.label}
+              title={toggleAccessibility?.label}
               disabled={pending || !hass?.callService}
               onClick={() => void callAction(toggleAction)}
             >
@@ -239,19 +252,43 @@ function normalizeEventIcon(event: EventItem) {
   return event.icon;
 }
 
-function getToggleAction(device: Device): { domain: 'switch' | 'valve'; service: string; entityId: string } | null {
+function getToggleAction(device: Device): {
+  domain: 'switch' | 'valve';
+  service: string;
+  entityId: string;
+  label: string;
+  controlState?: DeviceControlState;
+} | null {
   if (!isSwitchControlledDevice(device)) {
     return null;
   }
   const action = device.actions?.find((candidate) => candidate.domain === 'valve' || candidate.domain === 'switch');
   if (action) {
-    return { domain: action.domain as 'switch' | 'valve', service: action.service, entityId: action.entityId };
+    return {
+      domain: action.domain as 'switch' | 'valve',
+      service: action.service,
+      entityId: action.entityId,
+      label: action.label,
+      controlState: action.controlState,
+    };
   }
   if (device.entityId.startsWith('valve.')) {
-    return { domain: 'valve', service: deviceLooksOn(device) ? 'close_valve' : 'open_valve', entityId: device.entityId };
+    const isOn = deviceLooksOn(device);
+    return {
+      domain: 'valve',
+      service: isOn ? 'close_valve' : 'open_valve',
+      entityId: device.entityId,
+      label: isOn ? 'Close' : 'Open',
+    };
   }
   if (device.entityId.startsWith('switch.')) {
-    return { domain: 'switch', service: deviceLooksOn(device) ? 'turn_off' : 'turn_on', entityId: device.entityId };
+    const isOn = deviceLooksOn(device);
+    return {
+      domain: 'switch',
+      service: isOn ? 'turn_off' : 'turn_on',
+      entityId: device.entityId,
+      label: isOn ? 'Turn off' : 'Turn on',
+    };
   }
   return null;
 }
@@ -293,6 +330,10 @@ function isSwitchControlledDevice(device: Device): boolean {
       || device.type === 'light_switch'
       || device.type === 'waterstop'
       || /wallswitch|wall switch|lightswitch|light switch|waterstop|water stop|socket|plug|outlet/.test(text));
+}
+
+function isWaterStopDevice(device: Device): boolean {
+  return device.type === 'waterstop' || /waterstop|water stop|\bvalve\b/.test(deviceText(device));
 }
 
 function actionOrder(label: string): number {
@@ -364,19 +405,34 @@ function isImpulseRelay(device: Device): boolean {
 }
 
 function deviceLooksOn(device: Device): boolean {
+  return getDeviceControlState(device) === 'on';
+}
+
+function getDeviceControlState(device: Device): DeviceControlState {
+  const toggleAction = device.actions?.find((action) => action.domain === 'switch' || action.domain === 'valve');
+  if (toggleAction?.controlState) {
+    return toggleAction.controlState;
+  }
   if (device.actions?.some((action) => action.service === 'turn_off')) {
-    return true;
+    return 'on';
   }
   if (device.actions?.some((action) => action.service === 'turn_on')) {
-    return false;
+    return 'off';
   }
   if (device.actions?.some((action) => action.service === 'close_valve')) {
-    return true;
+    return 'on';
   }
   if (device.actions?.some((action) => action.service === 'open_valve')) {
-    return false;
+    return 'off';
   }
-  return /\bon\b|open\b|active|enabled|load|w\b/.test(`${device.status} ${device.signal}`.toLowerCase());
+  const text = `${device.status} ${device.signal}`.toLowerCase();
+  if (/\bon\b|\bopen\b|active|enabled|load|w\b/.test(text)) {
+    return 'on';
+  }
+  if (/\boff\b|\bclosed\b|inactive|disabled/.test(text)) {
+    return 'off';
+  }
+  return 'unknown';
 }
 
 function deviceText(device: Device): string {

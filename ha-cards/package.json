@@ -11,11 +11,12 @@
     "dev": "vite",
     "dev:lan": "vite --host 0.0.0.0",
     "check": "tsc -b",
+    "test": "node --test test/*.test.mjs",
     "lint": "oxlint --type-aware --max-warnings 0 src vite.config.ts",
     "lint:fix": "oxlint --type-aware --fix src vite.config.ts",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "verify": "npm run lint && npm run build"
+    "verify": "npm run test && npm run lint && npm run build"
   },
   "dependencies": {
     "react": "^19.2.8",
