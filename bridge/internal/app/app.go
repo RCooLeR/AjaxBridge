@@ -136,6 +136,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 			}
 		}
 		jeedomStore.ReconcileResolver(resolver)
+		metricSet.SetJeedomStore(jeedomStore)
 		if jeedomStoreLoaded && cfg.JeedomStorePath != "" {
 			if saveErr := jeedomStore.Save(ctx); saveErr != nil {
 				log.Warn().Err(saveErr).Str("path", cfg.JeedomStorePath).Msg("persist reconciled Jeedom cache")

@@ -9,14 +9,19 @@ const AJAX_BUTTON_MODELS = new Set([
 ]);
 
 const SIDEBAR_METRIC_LABELS = new Set([
+  'apparent power',
   'battery',
   'battery check',
   'current',
+  'current (raw)',
   'device updated',
+  'energy',
+  'energy (raw)',
   'firmware',
   'issues',
   'mode',
   'power',
+  'power (raw)',
   'signal',
   'temperature',
   'valve position',
@@ -106,7 +111,7 @@ export function resolveDeviceControlState(input: {
 }): DeviceControlState {
   if (isWaterStopType(input.deviceType)) {
     const positionState = controlStateFromValue(input.valvePosition);
-    if (positionState !== 'unknown') {
+    if (input.valvePosition !== undefined) {
       return positionState;
     }
   }

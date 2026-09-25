@@ -61,7 +61,7 @@ func (s *Server) Run(ctx context.Context) error {
 		router.Get("/jeedom/control-audit", s.jeedomControlAudit)
 		router.Post("/jeedom/devices/{device_slug}/control", s.jeedomControl)
 	}
-	router.Handle("/metrics", promhttp.HandlerFor(s.reg, promhttp.HandlerOpts{}))
+	router.Handle("/metrics", s.metricsHandler())
 
 	s.server = &http.Server{
 		Addr:              s.addr,
@@ -82,6 +82,10 @@ func (s *Server) Run(ctx context.Context) error {
 		return nil
 	}
 	return err
+}
+
+func (s *Server) metricsHandler() http.Handler {
+	return promhttp.HandlerFor(s.reg, promhttp.HandlerOpts{EnableOpenMetrics: true})
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {

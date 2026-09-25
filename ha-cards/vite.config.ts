@@ -11,6 +11,7 @@ export default defineConfig({
   plugins: [react()],
   build: {
     license: true,
+    manifest: true,
     rolldownOptions: {
       output: {
         entryFileNames: (chunkInfo) =>

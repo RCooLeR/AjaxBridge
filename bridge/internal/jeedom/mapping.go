@@ -34,11 +34,11 @@ func MappingFor(evt Event) Mapping {
 	}
 	switch canonicalCommandKey(commandKey(command)) {
 	case "puissance", "power":
-		return sensorMapping("power_w", "Power", firstNonEmpty(unit, "W"), "power", "measurement", true)
+		return electricalMapping("power", unit)
 	case "consommation", "energy", "consumption":
-		return sensorMapping("energy_kwh", "Energy", firstNonEmpty(unit, "kWh"), "energy", "total_increasing", true)
+		return energyMapping(unit)
 	case "courant", "current":
-		return sensorMapping("current_a", "Current", firstNonEmpty(unit, "A"), "current", "measurement", true)
+		return electricalMapping("current", unit)
 	case "tension", "voltage":
 		return sensorMapping("voltage_v", "Voltage", firstNonEmpty(unit, "V"), "voltage", "measurement", true)
 	case "temperature", "temp":
@@ -167,6 +167,10 @@ func MappingFor(evt Event) Mapping {
 // while unknown identifiers still fall through to the normal alias mapping.
 func contractMappingFor(evt Event, unit string) (Mapping, bool) {
 	switch commandKey(evt.LogicalID) {
+	case "currentma":
+		return electricalMapping("current", unit), true
+	case "powerwth":
+		return electricalMapping("power", unit), true
 	case "temperature", "actualtemperature":
 		return contractSensorMapping("temperature", unit), true
 	case "humidity", "actualhumidity":
@@ -178,6 +182,10 @@ func contractMappingFor(evt Event, unit string) (Mapping, bool) {
 	}
 
 	switch strings.ToUpper(strings.TrimSpace(RepairText(evt.GenericType))) {
+	case "CURRENT":
+		return electricalMapping("current", unit), true
+	case "POWER":
+		return electricalMapping("power", unit), true
 	case "TEMPERATURE":
 		return contractSensorMapping("temperature", unit), true
 	case "HUMIDITY":
@@ -212,6 +220,8 @@ func contractSensorMapping(kind, unit string) Mapping {
 // families without turning unrelated commands into binary sensors.
 func canonicalCommandKey(key string) string {
 	switch key {
+	case "alimentationexterne":
+		return "externalpower"
 	case "nombredefaut", "nombredefauts", "nombrededefaut", "nombrededefauts", "nombredeproblemes", "faultcount", "issuecount", "numberoffaults", "numberofissues":
 		return "issuecount"
 	case "carbondioxide", "co2", "co2concentration", "co2level", "dioxydedecarbone", "tauxdeco2":
@@ -260,7 +270,7 @@ func canonicalCommandKey(key string) string {
 		return "batteryfault"
 	case "defautalimentationdetecteur", "defautdalimentationdudetecteur", "detectorpowerfault", "detectorpowersupplyfault", "detectorsupplyfault":
 		return "detectorpowerfault"
-	case "defautalimentationdetecteurincendie", "defautdalimentationdudetecteurincendie", "defautdalimentationdesdetecteursdincendie", "firedetectorpowerfault", "firedetectorpowersupplyfault", "firedetectorsupplyfault":
+	case "defautalimentationincendie", "defautalimentationdetecteurincendie", "defautdalimentationdudetecteurincendie", "defautdalimentationdesdetecteursdincendie", "firedetectorpowerfault", "firedetectorpowersupplyfault", "firedetectorsupplyfault":
 		return "firedetectorpowerfault"
 	case "detectorpowerundervoltage", "detectorpowersupplyundervoltage", "detectorundervoltage", "soustensionalimentationdetecteur", "soustensiondetecteur", "soustensiondudetecteur":
 		return "detectorpowerundervoltage"

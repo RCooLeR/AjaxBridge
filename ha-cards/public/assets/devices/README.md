@@ -8,9 +8,9 @@ Path: `jeedom/`
 
 The card resolver in `src/utils/assets.ts` uses these images for device cards.
 
-Source URL pattern:
+These images come from an installed official Jeedom Ajax Systems plugin. Its URL pattern is:
 
-`https://jdm.rcooler.org/plugins/ajaxSystem/core/config/devices/<file>.png`
+`https://<jeedom-host>/plugins/ajaxSystem/core/config/devices/<file>.png`
 
 `Button_*` and `DoubleButton_*` are official transparent Ajax catalog images because the Jeedom image set does not include those models:
 

@@ -14,19 +14,21 @@ type CatalogResolverConfig struct {
 }
 
 type CatalogResolver struct {
-	cfg          CatalogResolverConfig
-	byCommandID  map[string]DeviceIdentity
-	byDeviceName map[string]DeviceIdentity
-	accountNames map[string]struct{}
-	account      DeviceIdentity
+	cfg            CatalogResolverConfig
+	byCommandID    map[string]DeviceIdentity
+	byDeviceName   map[string]DeviceIdentity
+	ambiguousNames map[string]struct{}
+	accountNames   map[string]struct{}
+	account        DeviceIdentity
 }
 
 func NewCatalogResolver(catalog *devicecatalog.Catalog, cfg CatalogResolverConfig) *CatalogResolver {
 	resolver := &CatalogResolver{
-		cfg:          cfg,
-		byCommandID:  make(map[string]DeviceIdentity),
-		byDeviceName: make(map[string]DeviceIdentity),
-		accountNames: make(map[string]struct{}),
+		cfg:            cfg,
+		byCommandID:    make(map[string]DeviceIdentity),
+		byDeviceName:   make(map[string]DeviceIdentity),
+		ambiguousNames: make(map[string]struct{}),
+		accountNames:   make(map[string]struct{}),
 	}
 	if catalog == nil {
 		return resolver
@@ -67,9 +69,21 @@ func NewCatalogResolver(catalog *devicecatalog.Catalog, cfg CatalogResolverConfi
 		}
 		for _, alias := range catalogDeviceAliases(device) {
 			key := aliasKey(alias)
-			if key != "" {
-				resolver.byDeviceName[key] = identity
+			if key == "" {
+				continue
 			}
+			if _, ambiguous := resolver.ambiguousNames[key]; ambiguous {
+				continue
+			}
+			if existing, exists := resolver.byDeviceName[key]; exists && existing.DeviceSlug != identity.DeviceSlug {
+				// A shared display name cannot establish ownership. Keep it
+				// unresolved regardless of catalog order; explicit command IDs
+				// still identify each physical device or logical App separately.
+				delete(resolver.byDeviceName, key)
+				resolver.ambiguousNames[key] = struct{}{}
+				continue
+			}
+			resolver.byDeviceName[key] = identity
 		}
 	}
 	return resolver
@@ -81,6 +95,9 @@ func (r *CatalogResolver) Resolve(evt Event, _ Mapping) DeviceIdentity {
 	}
 	if identity, ok := r.byCommandID[evt.CommandID]; ok {
 		return identity
+	}
+	if _, ambiguous := r.ambiguousNames[aliasKey(evt.DeviceName)]; ambiguous {
+		return DeviceIdentity{DiscoveryDisabled: !r.cfg.DiscoverUnlinked}
 	}
 	if identity, ok := r.byDeviceName[aliasKey(evt.DeviceName)]; ok {
 		return identity
@@ -109,6 +126,9 @@ func (r *CatalogResolver) ResolveDiscovery(discovery Discovery) DeviceIdentity {
 		if identity, ok := r.byCommandID[commandID]; ok {
 			return identity
 		}
+	}
+	if _, ambiguous := r.ambiguousNames[aliasKey(discovery.Name)]; ambiguous {
+		return DeviceIdentity{DiscoveryDisabled: !r.cfg.DiscoverUnlinked}
 	}
 	if identity, ok := r.byDeviceName[aliasKey(discovery.Name)]; ok {
 		return identity

@@ -1,5 +1,5 @@
 <?php
-// Adapted 2026-09-24 for AjaxBridge packaging; original regression tests unchanged.
+// Adapted 2026-09-25 for AjaxBridge packaging and WallSwitch unit regressions.
 // Run with: php validation/telemetry.php /path/to/complete/ajaxSystem
 // Executes the plugin's real parser/migration with a small in-memory Jeedom adapter.
 // Payloads are synthetic API examples, not recordings from a live installation.
@@ -233,6 +233,44 @@ addInfo($socket, 'realState', 'binary');
 $socket->updateData(array('currentMA' => 1000, 'voltage' => 230, 'realState' => 0), true);
 same(230, reading($socket, 'power'), 'Socket power uses updated scaled current and voltage');
 same(1, reading($socket, 'realState'), 'Socket callback inversion preserved');
+
+// WallSwitch templates declare raw units without introducing a second conversion.
+$wallUnits = new ajaxSystem('WallSwitch');
+$wallUnits->ensureInfoCommands();
+foreach (array('currentMA' => 'mA', 'powerWtH' => 'Wh') as $logicalId => $unit) {
+  $command = $wallUnits->getCmd('info', $logicalId);
+  same($unit, $command->getUnite(), 'New WallSwitch unit for ' . $logicalId);
+  same(false, array_key_exists('calculValueOffset', $command->attributes['configuration']), 'No implicit scale for ' . $logicalId);
+}
+same('Consommation', $wallUnits->getCmd('info', 'powerWtH')->getName(), 'WallSwitch counter is labelled consumption');
+foreach (array(false, true) as $isUpdate) {
+  $payload = array('currentMA' => 960, 'powerWtH' => 78485);
+  if ($isUpdate) { $wallUnits->updateData($payload, true); }
+  else { $wallUnits->refreshData($payload); }
+  same(960, reading($wallUnits, 'currentMA'), 'WallSwitch current remains raw mA');
+  same(78485, reading($wallUnits, 'powerWtH'), 'WallSwitch counter remains raw Wh');
+}
+
+// Repeated synchronization must leave existing IDs, history and custom scales intact.
+$existingWall = new ajaxSystem('WallSwitch');
+$existingContracts = array();
+foreach (array('currentMA' => 'A', 'powerWtH' => 'kWh') as $logicalId => $unit) {
+  $command = addInfo($existingWall, $logicalId, 'numeric', 'Custom ' . $logicalId, 7);
+  $command->setUnite($unit);
+  $command->setConfiguration('calculValueOffset', '#value# / 1000');
+  $command->setIsHistorized(1);
+  $command->value = 12.5;
+  $existingContracts[$logicalId] = array($command->attributes, $command->value);
+}
+$existingWall->ensureInfoCommands();
+$existingCount = count($existingWall->getCmd());
+$existingWall->ensureInfoCommands();
+same($existingCount, count($existingWall->getCmd()), 'WallSwitch repeated synchronization is idempotent');
+foreach ($existingContracts as $logicalId => $before) {
+  $command = $existingWall->getCmd('info', $logicalId);
+  same($before[0], $command->attributes, 'Existing WallSwitch ID and settings preserved for ' . $logicalId);
+  same($before[1], $command->value, 'Existing WallSwitch reading preserved for ' . $logicalId);
+}
 
 // WallSwitch/Relay expose confirmed device state from both transport formats.
 foreach (array('WallSwitch', 'Relay') as $model) {

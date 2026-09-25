@@ -349,3 +349,112 @@ func TestPendingDiscoveryCleanupSurvivesRestart(t *testing.T) {
 		t.Fatalf("pending action cleanup after restart = %#v, want action 900", device.PendingActionDiscoveryCleanups)
 	}
 }
+
+func TestVoltageRemainsCanonicalAcrossReconcileAndRestart(t *testing.T) {
+	for _, deviceType := range []string{"Relay", "WallSwitch", "Socket"} {
+		t.Run(deviceType, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "jeedom.json")
+			store, err := LoadStore(t.Context(), path, "keep_last", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			at := time.Unix(100, 0).UTC()
+			result := store.ApplyDiscovery(Discovery{
+				EqLogicID: "6", Name: "Supply", DeviceType: deviceType, ReceivedAt: at,
+				InfoCommands: map[string]DiscoveryCommand{
+					"230": {CommandID: "230", Name: "Voltage", LogicalID: "voltage", Type: "info", Subtype: "numeric", Value: json.RawMessage(`289.02`)},
+				},
+			})
+			want := 289.02
+			if deviceType == "Relay" {
+				want /= 10
+			}
+			if got := result.Device.Values["voltage_v"]; got != want {
+				t.Fatalf("discovery voltage = %#v, want %v", got, want)
+			}
+			live := store.Apply(Event{CommandID: "230", DeviceName: "Supply", CommandName: "Voltage", Subtype: "numeric", Value: json.RawMessage(`289.02`), ReceivedAt: at})
+			if live.Command.Value != want {
+				t.Fatalf("live voltage = %#v, want %v", live.Command.Value, want)
+			}
+			for cycle := 0; cycle < 3; cycle++ {
+				if err := store.Save(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				store, err = LoadStore(t.Context(), path, "keep_last", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				device, ok := store.Device(result.Device.DeviceSlug)
+				if !ok {
+					t.Fatal("missing device after restart")
+				}
+				reconcilePersistedMappings(&device)
+				if got := device.Values["voltage_v"]; got != want || device.RawCommands["230"].Value != want {
+					t.Fatalf("cycle %d voltage = %#v, command = %#v, want exactly %v", cycle, got, device.RawCommands["230"].Value, want)
+				}
+				if !device.RawCommands["230"].LastValueAt.Equal(at) {
+					t.Fatal("cache migration changed observation time")
+				}
+			}
+		})
+	}
+}
+
+func TestLegacyRelayVoltageMappingMigratesOnce(t *testing.T) {
+	for _, bareArray := range []bool{false, true} {
+		t.Run(map[bool]string{false: "versioned", true: "legacy_array"}[bareArray], func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "jeedom.json")
+			legacy := Device{
+				Device: "Supply", DeviceSlug: "supply", JeedomDeviceType: "Relay",
+				Values: map[string]any{"legacy_voltage_value": 289.02},
+				RawCommands: map[string]Command{
+					"230": {CommandID: "230", RawName: "Voltage", Metric: "legacy_voltage_value", Component: ComponentSensor, Subtype: "numeric", Value: 289.02},
+				},
+			}
+			var body []byte
+			var err error
+			if bareArray {
+				body, err = json.Marshal([]Device{legacy})
+			} else {
+				body, err = json.Marshal(persistedStore{Version: persistedStoreVersion, Devices: []Device{legacy}})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, body, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			want := 289.02
+			want /= 10
+			for cycle := 0; cycle < 3; cycle++ {
+				store, err := LoadStore(t.Context(), path, "keep_last", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				device, _ := store.Device("supply")
+				if device.Values["voltage_v"] != want || device.RawCommands["230"].Value != want {
+					t.Fatalf("cycle %d migrated values = %#v", cycle, device)
+				}
+				if _, exists := device.Values["legacy_voltage_value"]; exists {
+					t.Fatal("obsolete voltage metric survived migration")
+				}
+				if err := store.Save(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func TestRelayCacheDoesNotGuessRepairsForCanonicalVoltage(t *testing.T) {
+	device := Device{
+		DeviceSlug: "relay", JeedomDeviceType: "Relay", Values: map[string]any{},
+		RawCommands: map[string]Command{
+			"230": {CommandID: "230", RawName: "Voltage", Metric: "voltage_v", Component: ComponentSensor, Subtype: "numeric", Value: 2.8902},
+		},
+	}
+	reconcilePersistedMappings(&device)
+	if got := device.Values["voltage_v"]; got != 2.8902 {
+		t.Fatalf("canonical voltage = %#v, want unchanged 2.8902", got)
+	}
+}

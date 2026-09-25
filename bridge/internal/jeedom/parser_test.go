@@ -97,12 +97,12 @@ func TestIsCommandEventTopic(t *testing.T) {
 }
 
 func TestMappingPowerAndCurrent(t *testing.T) {
-	power := MappingFor(Event{CommandName: "Puissance", Type: "info", Subtype: "numeric"})
+	power := MappingFor(Event{CommandName: "Puissance", Type: "info", Subtype: "numeric", Unit: "W"})
 	if power.Metric != "power_w" || power.Unit != "W" || power.DeviceClass != "power" || power.StateClass != "measurement" {
 		t.Fatalf("power mapping = %#v", power)
 	}
 
-	current := MappingFor(Event{CommandName: "Courant", Type: "info", Subtype: "numeric"})
+	current := MappingFor(Event{CommandName: "Courant", Type: "info", Subtype: "numeric", Unit: "A"})
 	if current.Metric != "current_a" || current.Unit != "A" || current.DeviceClass != "current" || current.StateClass != "measurement" {
 		t.Fatalf("current mapping = %#v", current)
 	}
@@ -117,11 +117,12 @@ func TestMappingProductionJeedomCommands(t *testing.T) {
 		numeric   bool
 		binary    bool
 	}{
-		{name: "Consommation", subtype: "numeric", metric: "energy_kwh", component: ComponentSensor, numeric: true},
+		{name: "Consommation", subtype: "numeric", metric: "energy_raw", component: ComponentSensor, numeric: true},
 		{name: "Etat", subtype: "binary", metric: "state", component: ComponentBinarySensor, binary: true},
 		{name: "En ligne", subtype: "binary", metric: "online", component: ComponentBinarySensor, binary: true},
 		{name: "Signal", subtype: "string", metric: "signal_level", component: ComponentSensor},
 		{name: "Alimentation secteur", subtype: "binary", metric: "external_power", component: ComponentBinarySensor, binary: true},
+		{name: "Alimentation externe", subtype: "binary", metric: "external_power", component: ComponentBinarySensor, binary: true},
 	}
 	for _, tt := range tests {
 		mapping := MappingFor(Event{CommandName: tt.name, Subtype: tt.subtype})
@@ -202,7 +203,7 @@ func TestMappingContractMetadataPrecedesDisplayAliases(t *testing.T) {
 		{name: "generic humidity", event: Event{CommandName: "Power", GenericType: "HUMIDITY"}, metric: "humidity_percent", unit: "%", deviceClass: "humidity"},
 		{name: "generic CO2", event: Event{CommandName: "Power", GenericType: "CO2"}, metric: "co2_ppm", unit: "ppm", deviceClass: "carbon_dioxide"},
 		{name: "generic battery", event: Event{CommandName: "Power", GenericType: "BATTERY"}, metric: "battery_percent", unit: "%", deviceClass: "battery"},
-		{name: "unknown contract falls through", event: Event{CommandName: "Power", LogicalID: "temperatureAlarm", GenericType: "CO2_STATUS"}, metric: "power_w", unit: "W", deviceClass: "power"},
+		{name: "unknown contract falls through", event: Event{CommandName: "Power", LogicalID: "temperatureAlarm", GenericType: "CO2_STATUS", Unit: "W"}, metric: "power_w", unit: "W", deviceClass: "power"},
 	}
 
 	for _, tt := range tests {

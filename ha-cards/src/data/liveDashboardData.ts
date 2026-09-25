@@ -20,6 +20,7 @@ import type {
 } from '../models/dashboard';
 import { dashboardData as fallbackDashboardData } from './loadDashboardData';
 import type { HomeAssistant, HomeAssistantState } from '../ha/types';
+import { ajaxDeviceHealth, ajaxEntityOwner, ajaxEntitySemantic, ajaxRegistryOwner, diagnosticHealth, SECURITY_SIGNALS } from '../utils/ajaxSemantics';
 import {
   classifyAjaxDiagnosticMetric,
   controlStateLabel,
@@ -119,6 +120,8 @@ interface ResolvedDevice extends Device {
   cameraLike: boolean;
   sensorLike: boolean;
   severity: number;
+  securityAlarm?: boolean;
+  activeSafety?: { smoke: boolean; co: boolean };
   metrics?: DashboardMetric[];
 }
 
@@ -152,7 +155,7 @@ interface AjaxDeviceMetricContext {
 }
 
 interface DeviceMetricOptions {
-  calculatePowerFromVoltageCurrent?: boolean;
+  calculateApparentPower?: boolean;
   deviceType?: string;
 }
 
@@ -167,7 +170,6 @@ interface ClimateSample {
 }
 
 const DAHUA_HINT = /(dahua|rroller)/i;
-const AJAX_HINT = /(ajaxbridge|ajax)/i;
 const LEGACY_AJAX2PROM_HINT = /ajax2prometheus/i;
 const GO2RTC_HINT = /go2rtc/i;
 const VTO_DEBUG_HINT = /(vto|doorbell|bell|дзвінок|вызывная|calling panel)/i;
@@ -208,6 +210,9 @@ const ISSUE_SIGNALS = new Set([
   'firmware',
   'supervision',
   'button',
+  'temperature',
+  'bypass',
+  'tamper_bypass',
 ]);
 
 export function useDashboardData(hass?: HomeAssistant, account?: string, dahuaBase?: string): DashboardData {
@@ -328,7 +333,7 @@ export function useDashboardData(hass?: HomeAssistant, account?: string, dahuaBa
   return dashboardData;
 }
 
-function buildRegistryIndex(registries: RegistrySnapshot): RegistryIndex {
+export function buildRegistryIndex(registries: RegistrySnapshot): RegistryIndex {
   const areaById = new Map(registries.areas.map((area) => [area.area_id, area]));
   const areaIdByName = new Map(registries.areas.map((area) => [slugPart(area.name), area.area_id]));
   const deviceById = new Map(registries.devices.map((device) => [device.id, device]));
@@ -358,7 +363,7 @@ function buildRegistryIndex(registries: RegistrySnapshot): RegistryIndex {
   };
 }
 
-function buildDashboardDataFromHomeAssistant(
+export function buildDashboardDataFromHomeAssistant(
   states: Record<string, HomeAssistantState>,
   registryIndex: RegistryIndex,
   accountFilter?: string,
@@ -397,7 +402,7 @@ function buildDashboardDataFromHomeAssistant(
     .sort(sortRooms);
 
   return {
-    systemState: buildSystemState(states, rooms, resolvedDevices),
+    systemState: buildSystemState(states, rooms, resolvedDevices, entities, accountFilter),
     rooms,
     devices: resolvedDevices.map(toPublicDevice),
     events: resolvedEvents,
@@ -412,57 +417,82 @@ function buildAjaxDevices(
   accountFilter?: string,
 ): ResolvedDevice[] {
   const output: ResolvedDevice[] = [];
+  const groups = new Map<string, { device: HomeAssistantDeviceEntry; entries: HomeAssistantEntityEntry[]; roomId?: string }>();
+  const registeredOwners = new Map(devices.flatMap((device) => {
+    const owner = ajaxRegistryOwner(extractIdentifiers(device));
+    return owner ? [[owner, device] as const] : [];
+  }));
+  for (const device of devices) {
+    const entries = entitiesByDeviceId.get(device.id) ?? [];
+    if ((!isAjaxDevice(device) && !entries.some((entry) => /^ajaxbridge_/i.test(entry.unique_id ?? ''))) || isLegacyAjax2PrometheusDevice(device)) continue;
+    for (const entry of entries) {
+      if (isLegacyAjax2PrometheusEntity(entry) || isEntityHiddenOrDisabled(entry)) continue;
+      const owner = ajaxEntityOwner(entry.unique_id, states[entry.entity_id]?.attributes ?? {}) ?? ajaxRegistryOwner(extractIdentifiers(device)) ?? device.id;
+      const metadata = registeredOwners.get(owner) ?? device;
+      const group = groups.get(owner) ?? { device: metadata, entries: [], roomId: resolvedAreaByDeviceId.get(metadata.id) ?? resolvedAreaByDeviceId.get(device.id) };
+      group.entries.push(entry);
+      groups.set(owner, group);
+    }
+  }
 
-  for (const deviceEntry of devices) {
-    if (!isAjaxDevice(deviceEntry) || isLegacyAjax2PrometheusDevice(deviceEntry) || isAjaxAppDevice(deviceEntry)) {
+  for (const [owner, group] of groups) {
+    const deviceEntry = group.device;
+
+    const account = owner.match(/^sia_(.+)_zone_\d+$/)?.[1] ?? extractAjaxAccount(deviceEntry);
+    if (accountFilter && account && account.toLowerCase() !== accountFilter.toLowerCase()) {
       continue;
     }
 
-    const account = extractAjaxAccount(deviceEntry);
-    if (accountFilter && account && account !== accountFilter) {
-      continue;
-    }
-
-    const linkedEntities = (entitiesByDeviceId.get(deviceEntry.id) ?? []).filter(
-      (entry) => !isLegacyAjax2PrometheusEntity(entry),
-    );
+    const linkedEntities = group.entries;
     const actionEntries = linkedEntities.filter((entry) => isActionableEntity(entry));
     const accountDevice = isAjaxAccountDevice(deviceEntry);
     if (accountDevice && actionEntries.length === 0) {
       continue;
     }
-    const roomId = resolvedAreaByDeviceId.get(deviceEntry.id);
+    const roomId = group.roomId;
     if (!roomId || linkedEntities.length === 0) {
       continue;
     }
 
     const lastEventName = firstEntityState(linkedEntities, states, '_last_event_name')?.state ?? 'Awaiting event';
-    const lastEventAt = firstEntityState(linkedEntities, states, '_last_event_at')?.state ?? '';
+    const eventTimestamp = firstEntityState(linkedEntities, states, '_last_event_at')?.state ?? '';
+    const lastEventAt = toUnix(eventTimestamp) > 0 ? eventTimestamp : '';
     const lastSignal = firstEntityState(linkedEntities, states, '_last_signal')?.state ?? 'idle';
     const alarmSignal = firstEntityState(linkedEntities, states, '_alarm_signal')?.state ?? '';
-    const alarmActive = isOn(firstEntityState(linkedEntities, states, '_alarm_active'));
-    const tamperActive = isOn(firstEntityState(linkedEntities, states, '_tamper_active'));
-    const troubleActive = isOn(firstEntityState(linkedEntities, states, '_trouble_active'));
+    const activeSemantic = (semantic: string) => linkedEntities.some((entry) => ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes) === semantic && isOn(states[entry.entity_id]));
+    const alarmActive = activeSemantic('alarm_active');
+    const tamperActive = activeSemantic('tamper_active');
+    const troubleActive = activeSemantic('trouble_active');
     const activeSignals = linkedEntities
-      .filter((entry) => signalNameFromEntityId(entry.entity_id) !== null)
-      .filter((entry) => isOn(states[entry.entity_id]))
-      .map((entry) => signalNameFromEntityId(entry.entity_id))
+      .map((entry) => ({ entry, semantic: ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes) }))
+      .filter(({ semantic }) => semantic?.startsWith('signal_'))
+      .filter(({ entry }) => isOn(states[entry.entity_id]))
+      .map(({ semantic }) => semantic?.slice('signal_'.length) ?? null)
       .filter((signal): signal is string => signal !== null);
+    const health = ajaxDeviceHealth(linkedEntities.map((entry) => ({
+      semantic: ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes),
+      domain: entityDomain(entry.entity_id),
+      value: states[entry.entity_id]?.state ?? 'unknown',
+      deviceClass: safeString(states[entry.entity_id]?.attributes.device_class).toLowerCase(),
+    })), activeSignals);
 
-    const headline = summarizeHeadline({
+    const signalHeadline = summarizeHeadline({
       alarmActive,
       tamperActive,
       troubleActive,
       activeSignals,
     });
-    const severity = severityFromSignals({
+    const signalSeverity = severityFromSignals({
       alarmActive,
       tamperActive,
       troubleActive,
       activeSignals,
     });
-    const offline = activeSignals.includes('connectivity');
-    const sourceLabel = displayName(deviceEntry, linkedEntities);
+    const securityAlarm = alarmActive || tamperActive || activeSignals.some((signal) => SECURITY_SIGNALS.has(signal));
+    let severity = Math.max(signalSeverity, health.severity);
+    let headline = securityAlarm || signalSeverity >= health.severity ? signalHeadline : health.warning;
+    const offline = !health.online;
+    const sourceLabel = displayName(deviceEntry, linkedEntities, states);
     const type = inferDeviceType({
       name: sourceLabel,
       model: accountDevice ? 'Hub' : safeString(deviceEntry.model),
@@ -472,6 +502,10 @@ function buildAjaxDevices(
     const actions = isPhysicalAjaxButtonType(type)
       ? undefined
       : buildDeviceActions(actionEntries, states, { deviceType: type, linkedEntries: linkedEntities });
+    if (actions?.some((action) => action.disabled)) {
+      if (severity < 2) headline = 'Control state unknown';
+      severity = Math.max(severity, 2);
+    }
     const metrics = buildDeviceMetrics(
       linkedEntities,
       states,
@@ -485,11 +519,11 @@ function buildAjaxDevices(
         troubleActive,
         activeSignals,
       },
-      { calculatePowerFromVoltageCurrent: type === 'wall_switch', deviceType: type },
+      { calculateApparentPower: type === 'wall_switch', deviceType: type },
     );
 
     output.push({
-      id: deviceEntry.id,
+      id: owner,
       roomId,
       type,
       name: sourceLabel,
@@ -497,7 +531,7 @@ function buildAjaxDevices(
       icon: iconForDevice(type, sourceLabel, accountDevice ? 'Hub' : safeString(deviceEntry.model)),
       tone: toneFromSeverity(severity),
       status: headline,
-      connectivity: offline ? 'Offline' : 'Online',
+      connectivity: health.connectivity,
       battery: readAjaxBatteryLabel(linkedEntities, states, activeSignals),
       signal: readAjaxSignalLabel(linkedEntities, states, lastSignal),
       entityId: linkedEntities[0]?.entity_id ?? '',
@@ -513,6 +547,8 @@ function buildAjaxDevices(
       cameraLike: false,
       sensorLike: true,
       severity,
+      securityAlarm,
+      activeSafety: { smoke: activeSignals.some((signal) => ['fire', 'smoke', 'temperature'].includes(signal)), co: activeSignals.some((signal) => ['co', 'gas', 'gas_or_co'].includes(signal)) },
     });
   }
 
@@ -804,13 +840,15 @@ function buildRoomMetrics(
     current.dahuaCameraCount += device.integration === 'dahua' && device.cameraLike ? 1 : 0;
     current.sensorCount += device.sensorLike ? 1 : 0;
     applyDeviceSafetyCapability(current.safety, device);
+    current.safety.smokeHigh += device.activeSafety?.smoke ? 1 : 0;
+    current.safety.coHigh += device.activeSafety?.co ? 1 : 0;
     applyDeviceGridPower(current.gridPower, device);
     metrics.set(device.roomId, current);
   }
 
   for (const event of events) {
     const current = metrics.get(event.roomId);
-    if (current) {
+    if (current && devices.find((device) => device.id === event.deviceId)?.integration !== 'ajax') {
       applySafetyEvent(current.safety, event.type);
     }
     if (current && current.latestEventLabel === 'No recent events') {
@@ -954,6 +992,8 @@ function buildSystemState(
   states: Record<string, HomeAssistantState>,
   rooms: Room[],
   devices: ResolvedDevice[],
+  entities: HomeAssistantEntityEntry[] = [],
+  accountFilter?: string,
 ): SystemState {
   const alertCount = devices.filter((device) => device.attention).length;
   const smdIvsTotals = rooms.reduce<RoomSmdIvsCounts>((totals, room) => {
@@ -970,13 +1010,17 @@ function buildSystemState(
   const outletOnCount = outletDevices.filter(deviceIsOn).length;
   const lightSwitchOnCount = lightSwitchDevices.filter(deviceIsOn).length;
   const gridPower = summarizeGridPower(devices);
-  const accountModes = Object.entries(states)
-    .filter(([entityId]) => entityId.startsWith('sensor.account_') && entityId.endsWith('_mode'))
-    .map(([, state]) => safeString(state.state))
+  const accountEntities = entities.filter((entry) => {
+    const owner = ajaxEntityOwner(entry.unique_id, states[entry.entity_id]?.attributes ?? {});
+    return owner?.startsWith('account_') && (!accountFilter || owner === `account_${accountFilter.toLowerCase()}`);
+  });
+  const accountModes = accountEntities
+    .filter((entry) => ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes) === 'mode')
+    .map((entry) => safeString(states[entry.entity_id]?.state))
     .filter(Boolean);
-  const alarmActive = Object.entries(states).some(
-    ([entityId, state]) => entityId.startsWith('binary_sensor.account_') && entityId.endsWith('_alarm_active') && state.state === 'on',
-  );
+  const alarmActive = accountEntities.some(
+    (entry) => ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes) === 'alarm_active' && isOn(states[entry.entity_id]),
+  ) || devices.some((device) => device.securityAlarm);
   const armed = accountModes.some((mode) => mode === 'armed' || mode === 'night');
   const primaryMode = alarmActive ? 'Alarm' : accountModes[0] ? humanizeSlug(accountModes[0]) : 'Monitoring';
   const chips: DashboardChip[] = [
@@ -1049,13 +1093,8 @@ function buildSystemState(
 }
 
 function isOutletOrWallSwitchDevice(device: ResolvedDevice): boolean {
-  const text = deviceDescriptor(device);
-  if (isLightSwitchDevice(device)) {
-    return false;
-  }
   return device.type === 'smart_plug'
-    || device.type === 'wall_switch'
-    || /(socket|plug|outlet|wallswitch|wall switch)/.test(text);
+    || device.type === 'wall_switch';
 }
 
 function isLightSwitchDevice(device: ResolvedDevice): boolean {
@@ -1063,6 +1102,8 @@ function isLightSwitchDevice(device: ResolvedDevice): boolean {
 }
 
 function deviceIsOn(device: ResolvedDevice): boolean {
+  const control = device.actions?.find((action) => action.domain === 'switch' || action.domain === 'valve');
+  if (control) return control.controlState === 'on';
   if (device.actions?.some((action) => action.service === 'turn_off')) {
     return true;
   }
@@ -1072,7 +1113,7 @@ function deviceIsOn(device: ResolvedDevice): boolean {
   if (device.metrics?.some((metric) => metric.label.toLowerCase().includes('switch') && metric.value.toLowerCase() === 'on')) {
     return true;
   }
-  return /\bon\b|active|enabled|load|w\b/.test(`${device.status} ${device.signal}`.toLowerCase());
+  return false;
 }
 
 function summarizeGridPower(devices: ResolvedDevice[]): GridPowerSummary {
@@ -1387,14 +1428,17 @@ function firstEntityState(
   states: Record<string, HomeAssistantState>,
   suffix: string,
 ): HomeAssistantState | undefined {
-  const match = entries.find((entry) => entry.entity_id.endsWith(suffix));
+  const match = entries.find((entry) => ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes) === suffix.replace(/^_/, ''));
   return match ? states[match.entity_id] : undefined;
 }
 
-function displayName(deviceEntry: HomeAssistantDeviceEntry, linkedEntities: HomeAssistantEntityEntry[]): string {
+function displayName(deviceEntry: HomeAssistantDeviceEntry, linkedEntities: HomeAssistantEntityEntry[], states: Record<string, HomeAssistantState> = {}): string {
+  const registryName = safeString(deviceEntry.name);
+  const genericName = /^(?:ajax\s+)?(?:zone|sia|device)[\s_\d-]+$/i.test(registryName);
+  const telemetryName = linkedEntities.map((entry) => safeString(states[entry.entity_id]?.attributes.device)).find((name) => name && !/^(?:ajax\s+)?zone\s+\d+$/i.test(name));
   return (
     safeString(deviceEntry.name_by_user) ||
-    safeString(deviceEntry.name) ||
+    (genericName ? telemetryName || registryName : registryName) ||
     linkedEntities.map((entry) => safeString(entry.name) || safeString(entry.original_name)).find(Boolean) ||
     'Unknown device'
   );
@@ -1410,11 +1454,8 @@ function entityDisplayName(entry: HomeAssistantEntityEntry, state?: HomeAssistan
 }
 
 function isAjaxDevice(deviceEntry: HomeAssistantDeviceEntry): boolean {
-  return AJAX_HINT.test(
-    [deviceEntry.manufacturer, deviceEntry.model, deviceEntry.name, deviceEntry.name_by_user, ...extractIdentifiers(deviceEntry)]
-      .map(safeString)
-      .join(' '),
-  );
+  return /^ajax(?: systems| via jeedom)?$/i.test(safeString(deviceEntry.manufacturer))
+    || extractIdentifiers(deviceEntry).some((identifier) => /^ajaxbridge_/i.test(identifier));
 }
 
 function isLegacyAjax2PrometheusDevice(deviceEntry: HomeAssistantDeviceEntry): boolean {
@@ -1444,11 +1485,6 @@ function isAjaxAccountDevice(deviceEntry: HomeAssistantDeviceEntry): boolean {
   return safeString(deviceEntry.model).toLowerCase().includes('account') || extractIdentifiers(deviceEntry).some((value) => value.startsWith('ajaxbridge_account_'));
 }
 
-function isAjaxAppDevice(deviceEntry: HomeAssistantDeviceEntry): boolean {
-  const model = safeString(deviceEntry.model).toLowerCase();
-  return model === 'app' || model === 'ajax app' || model === 'mobile app';
-}
-
 function extractAjaxAccount(deviceEntry: HomeAssistantDeviceEntry): string | null {
   for (const identifier of extractIdentifiers(deviceEntry)) {
     if (identifier.startsWith('ajaxbridge_account_')) {
@@ -1471,6 +1507,7 @@ function extractIdentifiers(deviceEntry: HomeAssistantDeviceEntry): string[] {
   const output: string[] = [];
   for (const entry of raw) {
     if (Array.isArray(entry)) {
+      output.push(...entry.map(safeString).filter(Boolean));
       output.push(entry.map((value) => safeString(value)).filter(Boolean).join(':'));
       output.push(entry.map((value) => safeString(value)).filter(Boolean).join('_'));
       continue;
@@ -1665,9 +1702,14 @@ function buildDeviceActions(
   context: DeviceActionContext = {},
 ): DeviceAction[] | undefined {
   const valvePosition = readValvePosition(context.linkedEntries ?? [], states);
+  const valveEntry = context.linkedEntries?.find((entry) => ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes) === 'valve_position');
+  const observedState = ['wall_switch', 'relay'].includes(context.deviceType ?? '')
+    ? context.linkedEntries?.find((entry) => entityDomain(entry.entity_id) === 'binary_sensor' && ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes) === 'state')
+    : undefined;
   const actions = entries
-    .map((entry) => buildDeviceAction(entry, states[entry.entity_id], context.deviceType, valvePosition))
+    .map((entry) => buildDeviceAction(entry, states[observedState && entityDomain(entry.entity_id) !== 'button' ? observedState.entity_id : entry.entity_id], context.deviceType, valvePosition))
     .filter((action): action is DeviceAction => action !== null)
+    .map((action) => ({ ...action, valvePositionEntityId: valveEntry?.entity_id, observedStateEntityId: observedState?.entity_id ?? action.observedStateEntityId }))
     .sort(sortDeviceActions);
 
   return actions.length > 0 ? actions : undefined;
@@ -1691,7 +1733,7 @@ function buildDeviceAction(
     : undefined;
   const label = actionLabel(entry, state, semantic, controlState, valveSemantics);
   const service = actionService(domain, semantic, controlState);
-  if (!label || !service) {
+  if (!label) {
     return null;
   }
 
@@ -1703,6 +1745,10 @@ function buildDeviceAction(
     service,
     stateLabel: controlState ? controlStateLabel(controlState, valveSemantics) : state ? humanizeHomeAssistantState(state) : undefined,
     controlState,
+    observedStateEntityId: controlState ? entry.entity_id : undefined,
+    disabled: controlState !== undefined && controlState !== 'on' && controlState !== 'off',
+    disabledReason: controlState !== undefined && controlState !== 'on' && controlState !== 'off' ? 'Wait for a known device state' : undefined,
+    confirmation: (deviceType === 'hub' || deviceType === 'app') && domain === 'button' ? `Confirm ${label}?` : undefined,
   };
 }
 
@@ -1751,6 +1797,7 @@ function actionLabel(
   controlState?: DeviceAction['controlState'],
   valveSemantics = false,
 ): string {
+  if (controlState && controlState !== 'on' && controlState !== 'off') return 'Control unavailable';
   switch (semantic) {
     case 'open_door':
       return 'Open door';
@@ -1786,6 +1833,7 @@ function actionService(
   if (domain === 'button') {
     return 'press';
   }
+  if (controlState !== 'on' && controlState !== 'off') return '';
   if (domain === 'lock') {
     return controlState === 'on' && semantic === 'generic' ? 'lock' : 'unlock';
   }
@@ -1843,13 +1891,13 @@ function buildDeviceMetrics(
     }
   }
 
-  const sourceMetrics = options.calculatePowerFromVoltageCurrent
+  const sourceMetrics = options.calculateApparentPower
     ? candidates.filter((candidate) => candidate.kind !== 'power')
     : candidates;
-  if (options.calculatePowerFromVoltageCurrent) {
-    const calculatedPower = calculatedPowerMetric(entries, states);
-    if (calculatedPower) {
-      sourceMetrics.push(calculatedPower);
+  if (options.calculateApparentPower) {
+    const apparentPower = calculatedApparentPowerMetric(entries, states);
+    if (apparentPower) {
+      sourceMetrics.push(apparentPower);
     }
   }
 
@@ -1888,7 +1936,7 @@ function relayStateMetricCandidate(
   };
 }
 
-function calculatedPowerMetric(
+function calculatedApparentPowerMetric(
   entries: HomeAssistantEntityEntry[],
   states: Record<string, HomeAssistantState>,
 ): MetricCandidate | null {
@@ -1905,10 +1953,10 @@ function calculatedPowerMetric(
   }
 
   return {
-    id: `metric:calculated_power:${voltage.entityId}:${current.entityId}`,
-    kind: 'power',
-    label: 'Power',
-    value: formatMetricNumber(volts * amps, 'W', volts * amps >= 100 ? 0 : 1),
+    id: `metric:calculated_apparent_power:${voltage.entityId}:${current.entityId}`,
+    kind: 'apparent_power',
+    label: 'Apparent power',
+    value: formatMetricNumber(volts * amps, 'VA', volts * amps >= 100 ? 0 : 1),
     icon: { category: 'misc', key: 'energy' },
     tone: 'cyan',
     priority: 40,
@@ -1950,7 +1998,7 @@ function readNumericMetric(
 
 function normalizeVoltageToVolts(value: number, unit: string): number | null {
   const normalizedUnit = unit.trim().toLowerCase();
-  if (!normalizedUnit || normalizedUnit === 'v') {
+  if (normalizedUnit === 'v') {
     return value;
   }
   if (normalizedUnit === 'mv') {
@@ -1961,7 +2009,7 @@ function normalizeVoltageToVolts(value: number, unit: string): number | null {
 
 function normalizeCurrentToAmps(value: number, unit: string): number | null {
   const normalizedUnit = unit.trim().toLowerCase();
-  if (!normalizedUnit || normalizedUnit === 'a') {
+  if (normalizedUnit === 'a') {
     return value;
   }
   if (normalizedUnit === 'ma') {
@@ -2058,6 +2106,7 @@ function metricCandidateFromEntity(
   if (!state || isIgnoredMetricState(state)) {
     return null;
   }
+  if (['last_event_name', 'last_event_at', 'last_signal', 'alarm_signal'].includes(ajaxEntitySemantic(entry, state.attributes) ?? '')) return null;
 
   const domain = entityDomain(entry.entity_id);
   const deviceClass = safeString(state.attributes.device_class).toLowerCase();
@@ -2107,6 +2156,11 @@ function sensorMetricCandidate(
   text: string,
 ): MetricCandidate | null {
   const unit = safeString(state.attributes.unit_of_measurement);
+  // powerWtH is cumulative energy. Accept its verified energy metadata, but
+  // never display the legacy W label as instantaneous power.
+  const cumulativeEnergy = safeString(state.attributes.logical_id).toLowerCase() === 'powerwth';
+  const energyUnit = ['mWh', 'Wh', 'kWh', 'MWh', 'GWh', 'TWh', 'J', 'kJ', 'MJ', 'GJ', 'cal', 'kcal', 'Mcal', 'Gcal'].includes(unit);
+  if (cumulativeEnergy && (deviceClass !== 'energy' || !energyUnit)) return null;
   const diagnosticKind = classifyAjaxDiagnosticMetric(text, deviceClass);
 
   if (diagnosticKind === 'valve_position') {
@@ -2134,7 +2188,7 @@ function sensorMetricCandidate(
       label: 'Issues',
       value: formatSensorState(state, '', 0),
       icon: { category: 'system-states', key: issueCount === 0 ? 'ok' : 'trouble' },
-      tone: issueCount === 0 ? 'green' : 'amber',
+      tone: diagnosticHealth('issue_count', state.state).tone,
       priority: 16,
     };
   }
@@ -2146,7 +2200,7 @@ function sensorMetricCandidate(
       label: 'Battery check',
       value: humanizeHomeAssistantState(state),
       icon: { category: 'sensors', key: 'battery' },
-      tone: stateLooksNominal(state) ? 'green' : 'amber',
+      tone: diagnosticHealth('battery_check_status', state.state).tone,
       priority: 32,
     };
   }
@@ -2212,14 +2266,13 @@ function sensorMetricCandidate(
   }
 
   if (deviceClass === 'battery' || matchesMetricName(text, ['battery', 'batterie', 'battery_percent'])) {
-    const battery = parseStateNumber(state);
     return {
       id: `metric:${entry.entity_id}`,
       kind: 'battery',
       label: 'Battery',
       value: formatSensorState(state, unit || '%', 0),
       icon: { category: 'sensors', key: 'battery' },
-      tone: battery !== null && battery <= 20 ? 'amber' : 'green',
+      tone: diagnosticHealth('battery_percent', state.state).tone,
       priority: 30,
     };
   }
@@ -2236,36 +2289,38 @@ function sensorMetricCandidate(
     };
   }
 
-  if (deviceClass === 'power' || matchesMetricName(text, ['power_w', 'puissance'])) {
+  // The historic entity ID/name may still contain "power" after metadata repair.
+  if (deviceClass === 'energy' || matchesMetricName(text, ['energy', 'energy_raw', 'energy_kwh', 'energy_wh', 'consumption', 'consommation'])) {
+    const verifiedEnergy = deviceClass === 'energy' && energyUnit;
     return {
       id: `metric:${entry.entity_id}`,
-      kind: 'power',
-      label: 'Power',
-      value: formatSensorState(state, unit || 'W', 0),
-      icon: { category: 'misc', key: 'energy' },
-      tone: 'cyan',
-      priority: 40,
-    };
-  }
-
-  if (deviceClass === 'energy' || matchesMetricName(text, ['energy_kwh', 'consumption', 'consommation'])) {
-    return {
-      id: `metric:${entry.entity_id}`,
-      kind: 'energy',
-      label: 'Energy',
-      value: formatSensorState(state, unit || 'kWh', 1),
+      kind: verifiedEnergy ? 'energy' : 'energy_raw',
+      label: verifiedEnergy ? 'Energy' : 'Energy (raw)',
+      value: formatSensorState(state, unit, 1),
       icon: { category: 'misc', key: 'energy' },
       tone: 'cyan',
       priority: 41,
     };
   }
 
-  if (deviceClass === 'current' || matchesMetricName(text, ['current_a', 'courant'])) {
+  if (parseStateNumber(state) !== null && (deviceClass === 'power' || matchesMetricName(text, ['power', 'power_w', 'power_raw', 'puissance']))) {
     return {
       id: `metric:${entry.entity_id}`,
-      kind: 'current',
-      label: 'Current',
-      value: formatSensorState(state, unit || 'A', 1),
+      kind: unit ? 'power' : 'power_raw',
+      label: unit ? 'Power' : 'Power (raw)',
+      value: formatSensorState(state, unit, 0),
+      icon: { category: 'misc', key: 'energy' },
+      tone: 'cyan',
+      priority: 40,
+    };
+  }
+
+  if (parseStateNumber(state) !== null && (deviceClass === 'current' || matchesMetricName(text, ['current', 'current_a', 'current_ma', 'current_raw', 'courant']))) {
+    return {
+      id: `metric:${entry.entity_id}`,
+      kind: unit ? 'current' : 'current_raw',
+      label: unit ? 'Current' : 'Current (raw)',
+      value: formatSensorState(state, unit, 1),
       icon: { category: 'misc', key: 'energy' },
       tone: 'cyan',
       priority: 42,
@@ -2319,6 +2374,18 @@ function binaryMetricCandidate(
 ): MetricCandidate | null {
   const active = isActiveDahuaState(state);
   const activeTone: GlowTone = active ? 'amber' : 'green';
+  const semantic = ajaxEntitySemantic(entry, state.attributes);
+  const signal = semantic?.startsWith('signal_') ? semantic.slice('signal_'.length) : '';
+  if (signal && ISSUE_SIGNALS.has(signal)) {
+    if (!active && signal !== 'connectivity') return null;
+    return {
+      id: `metric:${entry.entity_id}`, kind: signal === 'connectivity' ? 'connectivity' : `fault_${signal}`,
+      label: signal === 'connectivity' ? 'Link' : `${humanizeSlug(signal)} alert`,
+      value: signal === 'connectivity' ? active ? 'Offline' : 'Online' : active ? 'Active' : 'Clear',
+      icon: { category: 'system-states', key: active ? 'trouble' : 'ok' },
+      tone: active ? SECURITY_SIGNALS.has(signal) ? 'red' : 'amber' : 'green', priority: 12,
+    };
+  }
 
   if (deviceClass === 'connectivity' || looksLikePositiveConnectivityEntity(entry, state)) {
     const online = isPositiveConnectivityState(state);
@@ -2569,6 +2636,8 @@ function titleMetricLabel(value: string): string {
 
 function entityDescriptorText(entry: HomeAssistantEntityEntry, state: HomeAssistantState): string {
   return [
+    ajaxEntitySemantic(entry, state.attributes),
+    entry.unique_id,
     entry.entity_id,
     entry.name,
     entry.original_name,
@@ -3011,18 +3080,13 @@ function findAreaForEntity(
   return null;
 }
 
-function signalNameFromEntityId(entityId: string): string | null {
-  const match = entityId.match(/_signal_([a-z0-9_]+)$/);
-  return match?.[1] ?? null;
-}
-
 function summarizeHeadline(input: {
   alarmActive: boolean;
   tamperActive: boolean;
   troubleActive: boolean;
   activeSignals: string[];
 }): string {
-  if (input.activeSignals.some((signal) => ['fire', 'smoke', 'co', 'gas', 'gas_or_co'].includes(signal))) {
+  if (input.activeSignals.some((signal) => ['fire', 'smoke', 'co', 'gas', 'gas_or_co', 'temperature'].includes(signal))) {
     return 'Fire response';
   }
   if (input.activeSignals.some((signal) => ['water_leak', 'leak', 'flood'].includes(signal))) {
@@ -3031,7 +3095,7 @@ function summarizeHeadline(input: {
   if (input.alarmActive || input.activeSignals.some((signal) => ['alarm', 'burglary', 'panic', 'duress', 'emergency', 'medical', 'hold_up'].includes(signal))) {
     return 'Alarm active';
   }
-  if (input.tamperActive) {
+  if (input.tamperActive || input.activeSignals.includes('tamper')) {
     return 'Tamper active';
   }
   if (input.troubleActive) {
@@ -3055,7 +3119,7 @@ function severityFromSignals(input: {
   troubleActive: boolean;
   activeSignals: string[];
 }): number {
-  const fireLike = input.activeSignals.some((signal) => ['fire', 'smoke', 'co', 'gas', 'gas_or_co'].includes(signal));
+  const fireLike = input.activeSignals.some((signal) => ['fire', 'smoke', 'co', 'gas', 'gas_or_co', 'temperature'].includes(signal));
   const waterLike = input.activeSignals.some((signal) => ['water_leak', 'leak', 'flood'].includes(signal));
   const intrusionLike = input.activeSignals.some((signal) => ['alarm', 'burglary', 'panic', 'duress', 'emergency', 'medical', 'hold_up'].includes(signal));
   const offline = input.activeSignals.includes('connectivity');
@@ -3064,7 +3128,8 @@ function severityFromSignals(input: {
   if (fireLike || waterLike || input.alarmActive || intrusionLike) {
     return 4;
   }
-  if (input.tamperActive || input.troubleActive || offline) {
+  if (input.tamperActive || input.activeSignals.includes('tamper')) return 4;
+  if (input.troubleActive || offline) {
     return 3;
   }
   if (batteryIssue || input.activeSignals.some((signal) => ISSUE_SIGNALS.has(signal))) {
@@ -3286,6 +3351,16 @@ function sortRooms(left: Room, right: Room): number {
 }
 
 function inferDeviceType(input: { name: string; model: string; entityIds: string[] }): string {
+  const product = input.model.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const productTypes: Array<[RegExp, string]> = [
+    [/^(?:ajax|mobile)?app$/, 'app'], [/^hub/, 'hub'], [/^wallswitch/, 'wall_switch'], [/^lightswitch/, 'light_switch'],
+    [/^socket/, 'smart_plug'], [/^waterstop/, 'waterstop'], [/^relay/, 'relay'], [/^multitransmitter/, 'multitransmitter'],
+    [/^transmitter/, 'transmitter'], [/^rex/, 'repeater'], [/^keypad/, 'keypad'], [/siren/, 'siren'],
+    [/^doorprotect/, 'door_sensor'], [/^glassprotect/, 'glass_break_sensor'], [/^fireprotect/, 'fire_detector'], [/^leaksprotect/, 'leak_detector'],
+    [/^motionprotectcurtain/, 'curtain_motion_sensor'], [/^motionprotectoutdoor/, 'outdoor_motion_sensor'], [/^motionprotect|^combi/, 'motion_sensor'],
+  ];
+  const productType = productTypes.find(([pattern]) => pattern.test(product));
+  if (productType) return productType[1];
   const haystack = `${input.name} ${input.model} ${input.entityIds.join(' ')}`.toLowerCase();
   const buttonType = inferAjaxButtonDeviceType(input.model);
   if (buttonType) {
@@ -3614,7 +3689,7 @@ function entityIdLeaf(entityId: string): string {
 }
 
 function isOn(state?: HomeAssistantState): boolean {
-  return state?.state === 'on';
+  return ['on', 'true', '1', 'active', 'detected', 'alarm'].includes(safeString(state?.state).toLowerCase());
 }
 
 function toUnix(value: string): number {

@@ -1,5 +1,5 @@
 {
-  "_ajaxbridge_patch_notice": "Modified 2026-09-24 by AjaxBridge contributors: expanded device telemetry and state parsing. See ajaxbridge-patch/NOTICE.md and license texts; original Jeedom notices remain applicable.",
+  "_ajaxbridge_patch_notice": "Modified 2026-09-25 by AjaxBridge contributors: expanded device telemetry and state parsing; explicit raw mA and Wh units for WallSwitch. See ajaxbridge-patch/NOTICE.md and license texts; original Jeedom notices remain applicable.",
   "name" : "WallSwitch",
   "commands" : [
     {
@@ -44,13 +44,14 @@
       "logicalId": "voltage"
     },
     {
-      "name": "Puissance",
+      "name": "Consommation",
       "type": "info",
       "subtype": "numeric",
       "generic_type": "POWER",
       "isVisible": 0,
       "isHistorized": 0,
-      "logicalId": "powerWtH"
+      "logicalId": "powerWtH",
+      "unite": "Wh"
     },
     {
       "name": "Courant",
@@ -59,7 +60,8 @@
       "generic_type": "CURRENT",
       "isVisible": 0,
       "isHistorized": 0,
-      "logicalId": "currentMA"
+      "logicalId": "currentMA",
+      "unite": "mA"
     },
     {
       "name": "On",

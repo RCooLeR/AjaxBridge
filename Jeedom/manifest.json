@@ -1,13 +1,13 @@
 {
-  "bundle": "2026.09.24.1",
-  "date": "2026-09-24",
+  "bundle": "2026.09.25.1",
+  "date": "2026-09-25",
   "plugin_id": "ajaxSystem",
   "jeedom_minimum_from_upstream_metadata": "4.4",
   "baseline_commit": "0ee0a700a0f1d5fa578e0e51a762a15e98daeb69",
   "source_commit": "af5a742706f7185a4b018e94671d1b7ed8b0e731",
   "baseline_description": "Local snapshot; latest original changelog entry 2026-01-12. Not an official release identifier. Transmitter temperature already present.",
   "runtime_file_count": 43,
-  "hash_notes": "Source and baseline hashes normalize CRLF to LF; packaged hashes are exact bytes. Files include modification notices and LF endings.",
+  "hash_notes": "Source and baseline hashes normalize CRLF to LF; packaged hashes are exact bytes. Files include modification notices and LF endings. The WallSwitch unit correction is a package-local change after source_commit; source_sha256_lf retains the original source provenance.",
   "files": [
     {
       "path": "core/class/ajaxSystem.class.php",
@@ -287,7 +287,9 @@
       "kind": "modified",
       "source_sha256_lf": "efe6f46d9e8dfc6dd2c55a9d84802e663af3cb954e0b35d9aa3f863ac4b9c3f8",
       "baseline_sha256_lf": "1bb57f895b3bd75bdb70ebc6e9afb94d2867efe040b710af91e9387eead53568",
-      "packaged_sha256": "0757854ceea3343fa6b8e5c6dfad661164a830cc3be4004c38ae1df70f4a792c"
+      "packaged_sha256": "a16fec8f34d9a3643cb7254fd62eed67f8ee4dc8527818029b935cee0d75737f",
+      "previous_packaged_sha256": "0757854ceea3343fa6b8e5c6dfad661164a830cc3be4004c38ae1df70f4a792c",
+      "package_changes": "2026.09.25.1: explicit raw mA/Wh units and Consommation counter label; no scaling or existing-command migration."
     },
     {
       "path": "core/config/devices/WaterStop.json",

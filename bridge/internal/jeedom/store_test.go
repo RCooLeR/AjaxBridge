@@ -19,6 +19,7 @@ func TestStoreEmptyValueKeepsLastNumericValue(t *testing.T) {
 		ObjectName:  "None",
 		DeviceName:  "Серверна",
 		CommandName: "Puissance",
+		Unit:        "W",
 		Type:        "info",
 		Subtype:     "numeric",
 		Value:       json.RawMessage(`123.4`),
@@ -51,6 +52,7 @@ func TestStoreUnknownValuePreservesLastValidHistory(t *testing.T) {
 		CommandID:   "56",
 		DeviceName:  "Server",
 		CommandName: "Puissance",
+		Unit:        "W",
 		Type:        "info",
 		Subtype:     "numeric",
 		Value:       json.RawMessage(`12.5`),
@@ -86,6 +88,7 @@ func TestStorePreservesZeroAndFalseAsUsableValues(t *testing.T) {
 		CommandID:   "56",
 		DeviceName:  "Server",
 		CommandName: "Puissance",
+		Unit:        "W",
 		Type:        "info",
 		Subtype:     "numeric",
 		Value:       json.RawMessage(`0`),
@@ -499,6 +502,39 @@ func TestStoreKeepsWallSwitchVoltageUnscaled(t *testing.T) {
 
 	if got := result.Device.Values["voltage_v"]; got != 238.0 {
 		t.Fatalf("voltage_v = %#v, want 238", got)
+	}
+}
+
+func TestSeedStoredRelayVoltageUsesPreviousMetric(t *testing.T) {
+	for _, previous := range []struct {
+		name      string
+		metric    string
+		component string
+		value     float64
+	}{
+		{name: "same_contract", metric: "voltage_v", component: ComponentSensor, value: 28.902},
+		{name: "component_change", metric: "voltage_v", component: ComponentBinarySensor, value: 28.902},
+		{name: "legacy_fallback", metric: "legacy_voltage_value", component: ComponentSensor, value: 289.02},
+	} {
+		t.Run(previous.name, func(t *testing.T) {
+			device := Device{DeviceSlug: "relay", JeedomDeviceType: "Relay", Values: map[string]any{}}
+			existing := Command{CommandID: "230", Metric: previous.metric, Component: previous.component, Value: previous.value}
+			mapping := MappingFor(Event{CommandName: "Voltage", Subtype: "numeric"})
+			want := previous.value
+			if previous.metric != "voltage_v" {
+				want /= 10
+			}
+			for cycle := 0; cycle < 3; cycle++ {
+				command := existing
+				command.Metric = mapping.Metric
+				command.Component = mapping.Component
+				seedDeviceValueFromCommand(&device, &command, existing, mapping)
+				if command.Value != want || device.Values["voltage_v"] != want {
+					t.Fatalf("cycle %d stored voltage = %#v, want %v", cycle, command.Value, want)
+				}
+				existing = command
+			}
+		})
 	}
 }
 

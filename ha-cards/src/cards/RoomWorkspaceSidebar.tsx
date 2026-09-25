@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
-import type { Device, DeviceActionDomain, DeviceControlState, EventItem } from '../models/dashboard';
+import type { Device, DeviceAction, DeviceControlState, EventItem } from '../models/dashboard';
 import type { HomeAssistant } from '../ha/types';
 import { Icon } from '../components/Icon';
-import { callEntityService } from '../ha/services';
+import { callDeviceAction } from '../ha/services';
 import { getDeviceImageAsset, getToneClass } from '../utils/assets';
 import { controlStateLabel, deviceControlAccessibility, selectSidebarMetrics } from '../utils/deviceSemantics';
 import { formatEventStamp } from '../utils/format';
@@ -96,13 +96,13 @@ function AjaxDeviceListItem({ device, selected, onSelect, hass }: AjaxDeviceList
     })
     : null;
 
-  async function callAction(action: { domain: DeviceActionDomain; service: string; entityId: string }) {
-    if (!hass?.callService) {
+  async function callAction(action: DeviceAction) {
+    if (!hass?.callService || pending) {
       return;
     }
     setPending(true);
     try {
-      await callEntityService(hass, action.domain, action.service, action.entityId);
+      await callDeviceAction(hass, device, action, (message) => window.confirm(message));
     } catch (error) {
       console.error('[ajaxbridge] Home Assistant action failed', { action, error });
     } finally {
@@ -159,7 +159,7 @@ function AjaxDeviceListItem({ device, selected, onSelect, hass }: AjaxDeviceList
               aria-checked={toggleAccessibility?.ariaChecked}
               aria-label={toggleAccessibility?.label}
               title={toggleAccessibility?.label}
-              disabled={pending || !hass?.callService}
+              disabled={pending || !hass?.callService || toggleAction.disabled || isIndeterminate}
               onClick={() => void callAction(toggleAction)}
             >
               <span className="ajax-device-item__toggle-track">
@@ -174,7 +174,7 @@ function AjaxDeviceListItem({ device, selected, onSelect, hass }: AjaxDeviceList
               className="ajax-device-item__impulse"
               aria-label={`Send impulse to ${device.name}`}
               title="Impulse"
-              disabled={pending || !hass?.callService}
+              disabled={pending || !hass?.callService || impulseAction.disabled}
               onClick={() => void callAction(impulseAction)}
             >
               <Icon icon={{ category: 'devices', key: 'relay' }} size={20} />
@@ -185,7 +185,7 @@ function AjaxDeviceListItem({ device, selected, onSelect, hass }: AjaxDeviceList
               key={action.entityId}
               type="button"
               className={['ajax-device-item__action', actionClass(action.label)].join(' ')}
-              disabled={pending || !hass?.callService}
+              disabled={pending || !hass?.callService || action.disabled}
               onClick={() => void callAction(action)}
             >
               <Icon icon={iconForAction(action.label)} size={18} />
@@ -252,73 +252,26 @@ function normalizeEventIcon(event: EventItem) {
   return event.icon;
 }
 
-function getToggleAction(device: Device): {
-  domain: 'switch' | 'valve';
-  service: string;
-  entityId: string;
-  label: string;
-  controlState?: DeviceControlState;
-} | null {
+function getToggleAction(device: Device): DeviceAction | null {
   if (!isSwitchControlledDevice(device)) {
     return null;
   }
-  const action = device.actions?.find((candidate) => candidate.domain === 'valve' || candidate.domain === 'switch');
-  if (action) {
-    return {
-      domain: action.domain as 'switch' | 'valve',
-      service: action.service,
-      entityId: action.entityId,
-      label: action.label,
-      controlState: action.controlState,
-    };
-  }
-  if (device.entityId.startsWith('valve.')) {
-    const isOn = deviceLooksOn(device);
-    return {
-      domain: 'valve',
-      service: isOn ? 'close_valve' : 'open_valve',
-      entityId: device.entityId,
-      label: isOn ? 'Close' : 'Open',
-    };
-  }
-  if (device.entityId.startsWith('switch.')) {
-    const isOn = deviceLooksOn(device);
-    return {
-      domain: 'switch',
-      service: isOn ? 'turn_off' : 'turn_on',
-      entityId: device.entityId,
-      label: isOn ? 'Turn off' : 'Turn on',
-    };
-  }
-  return null;
+  return device.actions?.find((candidate) => candidate.domain === 'valve' || candidate.domain === 'switch') ?? null;
 }
 
-function getImpulseAction(device: Device): { domain: DeviceActionDomain; service: string; entityId: string } | null {
+function getImpulseAction(device: Device): DeviceAction | null {
   if (!isImpulseRelay(device)) {
     return null;
   }
-  const action = device.actions?.find((candidate) => candidate.domain === 'button') ?? device.actions?.[0];
-  if (action) {
-    return { domain: action.domain, service: action.service, entityId: action.entityId };
-  }
-  if (device.entityId.startsWith('switch.')) {
-    return { domain: 'switch', service: 'turn_on', entityId: device.entityId };
-  }
-  return null;
+  return device.actions?.find((candidate) => candidate.domain === 'button') ?? null;
 }
 
-function getButtonActions(device: Device): Array<{ domain: DeviceActionDomain; service: string; entityId: string; label: string }> {
+function getButtonActions(device: Device): DeviceAction[] {
   if (isImpulseRelay(device)) {
     return [];
   }
   return (device.actions ?? [])
     .filter((action) => action.domain === 'button')
-    .map((action) => ({
-      domain: action.domain,
-      service: action.service,
-      entityId: action.entityId,
-      label: action.label,
-    }))
     .sort((left, right) => actionOrder(left.label) - actionOrder(right.label) || left.label.localeCompare(right.label));
 }
 
@@ -404,35 +357,9 @@ function isImpulseRelay(device: Device): boolean {
   return device.type === 'relay' && !/wallswitch|wall switch|lightswitch|light switch|waterstop|water stop/.test(text);
 }
 
-function deviceLooksOn(device: Device): boolean {
-  return getDeviceControlState(device) === 'on';
-}
-
 function getDeviceControlState(device: Device): DeviceControlState {
   const toggleAction = device.actions?.find((action) => action.domain === 'switch' || action.domain === 'valve');
-  if (toggleAction?.controlState) {
-    return toggleAction.controlState;
-  }
-  if (device.actions?.some((action) => action.service === 'turn_off')) {
-    return 'on';
-  }
-  if (device.actions?.some((action) => action.service === 'turn_on')) {
-    return 'off';
-  }
-  if (device.actions?.some((action) => action.service === 'close_valve')) {
-    return 'on';
-  }
-  if (device.actions?.some((action) => action.service === 'open_valve')) {
-    return 'off';
-  }
-  const text = `${device.status} ${device.signal}`.toLowerCase();
-  if (/\bon\b|\bopen\b|active|enabled|load|w\b/.test(text)) {
-    return 'on';
-  }
-  if (/\boff\b|\bclosed\b|inactive|disabled/.test(text)) {
-    return 'off';
-  }
-  return 'unknown';
+  return toggleAction?.controlState ?? 'unknown';
 }
 
 function deviceText(device: Device): string {

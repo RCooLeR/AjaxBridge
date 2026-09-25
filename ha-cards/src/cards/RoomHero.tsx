@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CameraStreamProfile, Device, DeviceActionDomain, EventItem, GlowTone, IconRef, Room, RoomSummary } from '../models/dashboard';
+import type { CameraStreamProfile, Device, DeviceAction, EventItem, GlowTone, IconRef, Room, RoomSummary } from '../models/dashboard';
 import type { HomeAssistant, HomeAssistantState } from '../ha/types';
 import { Icon } from '../components/Icon';
 import { StatusBadge } from '../components/StatusBadge';
-import { callEntityService } from '../ha/services';
+import { callDeviceAction } from '../ha/services';
 import { getRoomImageAsset, getToneClass } from '../utils/assets';
 
 interface RoomHeroProps {
@@ -17,7 +17,7 @@ interface RoomHeroProps {
   hass?: HomeAssistant;
 }
 
-export function RoomHero({ room, roomSummary, roomEvents, selectedDevice, streamProfile, audioMuted, audioVolume, hass }: RoomHeroProps) {
+export function RoomHero({ room, roomSummary, selectedDevice, streamProfile, audioMuted, audioVolume, hass }: RoomHeroProps) {
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [failedMediaSource, setFailedMediaSource] = useState<string | null>(null);
@@ -32,22 +32,21 @@ export function RoomHero({ room, roomSummary, roomEvents, selectedDevice, stream
   const safety = roomSummary.safety ?? room.safety ?? { smokeHigh: 0, coHigh: 0, smokeCapable: 0, coCapable: 0 };
   const hasSmokeSensor = (safety.smokeCapable ?? 0) > 0;
   const hasCoSensor = (safety.coCapable ?? 0) > 0;
-  const smokeHigh = hasSmokeSensor ? safety.smokeHigh || countRoomEvents(roomEvents, ['smoke_detected', 'fire_detected']) : 0;
-  const coHigh = hasCoSensor ? safety.coHigh || countRoomEvents(roomEvents, ['gas_detected']) : 0;
+  const smokeHigh = hasSmokeSensor ? safety.smokeHigh : 0;
+  const coHigh = hasCoSensor ? safety.coHigh : 0;
 
-  async function handleAction(actionId: string, domain: DeviceActionDomain, service: string, entityId: string) {
-    if (!hass?.callService) {
+  async function handleAction(action: DeviceAction) {
+    if (!hass?.callService || !selectedDevice || pendingActionId !== null) {
       setActionFeedback('Home Assistant service API unavailable');
       return;
     }
 
-    setPendingActionId(actionId);
+    setPendingActionId(action.id);
     setActionFeedback(null);
 
     try {
-      console.debug('[ajaxbridge] calling Home Assistant service', { domain, service, entityId });
-      await callEntityService(hass, domain, service, entityId);
-      setActionFeedback(`Sent ${domain}.${service}`);
+      const sent = await callDeviceAction(hass, selectedDevice, action, (message) => window.confirm(message));
+      setActionFeedback(sent ? `Sent ${action.label}` : 'Cancelled');
     } catch {
       setActionFeedback('Action failed');
     } finally {
@@ -167,8 +166,9 @@ export function RoomHero({ room, roomSummary, roomEvents, selectedDevice, stream
                 key={action.id}
                 type="button"
                 className="room-hero__action-button"
-                disabled={pendingActionId !== null}
-                onClick={() => void handleAction(action.id, action.domain, action.service, action.entityId)}
+                disabled={pendingActionId !== null || !hass?.callService || action.disabled}
+                title={action.disabledReason}
+                onClick={() => void handleAction(action)}
               >
                 <span>{action.label}</span>
                 {action.stateLabel ? <small>{action.stateLabel}</small> : null}
@@ -457,11 +457,6 @@ function resolveFocusedVideoProfile(attributes: Record<string, unknown>, profile
   }
 
   return 'quality';
-}
-
-function countRoomEvents(events: EventItem[], types: string[]): number {
-  const wanted = new Set(types);
-  return events.filter((event) => wanted.has(event.type)).length;
 }
 
 function readBridgeProfile(attributes: Record<string, unknown>, profileKey: string): Record<string, unknown> | null {

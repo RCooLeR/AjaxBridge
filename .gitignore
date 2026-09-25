@@ -42,9 +42,12 @@ tmp/
 tmp-jeedom/
 dist/
 /ha-cards-dist.tar.gz
+/AjaxBridge_*_jeedom_patch.zip
 build/
 node_modules/
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
 images-for-cards/
 
 # Docker overrides

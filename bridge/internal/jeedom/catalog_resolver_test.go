@@ -44,6 +44,123 @@ func TestCatalogResolverDisablesUnlinkedDiscoveryByDefault(t *testing.T) {
 	}
 }
 
+func TestCatalogResolverRejectsAmbiguousAliasesAndKeepsCommandOwners(t *testing.T) {
+	devices := []devicecatalog.Device{
+		{Account: "A0F80D", Zone: "2", Name: "Diana", Kind: "SpaceControl", JeedomNames: []string{"Будинок Діана", "Shared remote"}, JeedomCommandIDs: []string{"102"}},
+		{Account: "A0F80D", Zone: "20", Name: "Diana", Kind: "SpaceControl", JeedomNames: []string{"Будинок Діана", "Shared-remote"}, JeedomCommandIDs: []string{"120"}},
+		{Account: "A0F80D", Zone: "21", Name: "Diana", Kind: "SpaceControl", JeedomNames: []string{"Будинок Діана"}, JeedomCommandIDs: []string{"121"}},
+		{Account: "A0F80D", Zone: "501", Name: "Diana", Kind: "App", JeedomNames: []string{"Будинок Діана"}, JeedomCommandIDs: []string{"501"}},
+		{Account: "A0F80D", Zone: "502", Name: "Diana", Kind: "App", JeedomNames: []string{"Будинок Діана"}, JeedomCommandIDs: []string{"502"}},
+	}
+	for _, reverse := range []bool{false, true} {
+		ordered := append([]devicecatalog.Device(nil), devices...)
+		if reverse {
+			for i, j := 0, len(ordered)-1; i < j; i, j = i+1, j-1 {
+				ordered[i], ordered[j] = ordered[j], ordered[i]
+			}
+		}
+		for _, discoverUnlinked := range []bool{false, true} {
+			resolver := NewCatalogResolver(testCatalog(t, ordered...), CatalogResolverConfig{
+				AccountNames: []string{"Diana"}, DiscoverUnlinked: discoverUnlinked,
+			})
+			for _, name := range []string{"Diana", "Будинок Діана", "Shared remote", "Shared-remote"} {
+				identities := []DeviceIdentity{
+					resolver.Resolve(Event{CommandID: "unknown", DeviceName: name, CommandName: "Etat"}, Mapping{}),
+					resolver.ResolveDiscovery(Discovery{Name: name, DeviceType: "Hub"}),
+				}
+				for _, identity := range identities {
+					if identity.DeviceSlug != "" || identity.LinkedZone != "" || identity.DiscoveryDisabled == discoverUnlinked {
+						t.Fatalf("ambiguous alias %q reverse=%v discoverUnlinked=%v resolved to %#v", name, reverse, discoverUnlinked, identity)
+					}
+				}
+			}
+			for _, device := range devices {
+				commandID := device.JeedomCommandIDs[0]
+				identities := []DeviceIdentity{
+					resolver.Resolve(Event{CommandID: commandID, DeviceName: "Diana"}, Mapping{}),
+					resolver.ResolveDiscovery(Discovery{Name: "Diana", InfoCommands: map[string]DiscoveryCommand{
+						commandID: {CommandID: commandID},
+					}}),
+					resolver.ResolveDiscovery(Discovery{Name: "Diana", Actions: map[string]DiscoveryCommand{
+						commandID: {CommandID: commandID},
+					}}),
+				}
+				for _, identity := range identities {
+					if identity.LinkedZone != device.Zone || identity.DeviceSlug != "sia_a0f80d_zone_"+device.Zone || len(identity.HAIdentifiers) != 1 || identity.HAIdentifiers[0] != "ajaxbridge_A0F80D_zone_"+device.Zone {
+						t.Fatalf("command %q reverse=%v lost canonical owner: %#v", commandID, reverse, identity)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestCatalogResolverKeepsUniqueAliasesAndExplicitCommandPriority(t *testing.T) {
+	resolver := NewCatalogResolver(testCatalog(t,
+		devicecatalog.Device{Account: "A0F80D", Zone: "2", Name: "Remote one", JeedomNames: []string{"Unique remote", "Unique-remote", "Remote one"}, JeedomCommandIDs: []string{"102"}},
+		devicecatalog.Device{Account: "A0F80D", Zone: "20", Name: "Remote two", JeedomCommandIDs: []string{"120"}},
+	), CatalogResolverConfig{})
+	for _, name := range []string{"Remote one", "Unique remote", "Unique-remote"} {
+		if identity := resolver.Resolve(Event{DeviceName: name}, Mapping{}); identity.LinkedZone != "2" {
+			t.Fatalf("unique alias %q lost owner: %#v", name, identity)
+		}
+		if identity := resolver.ResolveDiscovery(Discovery{Name: name}); identity.LinkedZone != "2" {
+			t.Fatalf("unique discovery alias %q lost owner: %#v", name, identity)
+		}
+		if identity := resolver.Resolve(Event{CommandID: "120", DeviceName: name}, Mapping{}); identity.LinkedZone != "20" {
+			t.Fatalf("name %q overrode explicit command owner: %#v", name, identity)
+		}
+	}
+}
+
+func TestCatalogResolverPreservesSameNameZonesAcrossRestart(t *testing.T) {
+	var devices []devicecatalog.Device
+	for _, zone := range []string{"2", "20", "21", "501", "502"} {
+		kind := "SpaceControl"
+		if zone == "501" || zone == "502" {
+			kind = "App"
+		}
+		devices = append(devices, devicecatalog.Device{Account: "A0F80D", Zone: zone, Name: "Diana", Kind: kind, JeedomCommandIDs: []string{"command_" + zone}})
+	}
+	resolver := NewCatalogResolver(testCatalog(t, devices...), CatalogResolverConfig{})
+	path := filepath.Join(t.TempDir(), "jeedom.json")
+	store, err := LoadStore(t.Context(), path, "keep_last", resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for cycle := 0; cycle < 3; cycle++ {
+		for _, expected := range devices {
+			commandID := expected.JeedomCommandIDs[0]
+			store.ApplyDiscovery(Discovery{
+				EqLogicID: expected.Zone, Name: "Diana", DeviceType: expected.Kind,
+				InfoCommands: map[string]DiscoveryCommand{
+					commandID: {CommandID: commandID, Name: "Firmware version", LogicalID: "firmwareVersion", Type: "info", Subtype: "string", Value: json.RawMessage(`"1.0"`)},
+				},
+			})
+		}
+		if err := store.Save(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		store, err = LoadStore(t.Context(), path, "keep_last", resolver)
+		if err != nil {
+			t.Fatal(err)
+		}
+		store.ReconcileResolver(resolver)
+		if got := len(store.Devices()); got != len(devices) {
+			t.Fatalf("cycle %d device count = %d, want %d", cycle, got, len(devices))
+		}
+		for _, expected := range devices {
+			device, ok := store.Device("sia_a0f80d_zone_" + expected.Zone)
+			if !ok || device.LinkedZone != expected.Zone || len(device.RawCommands) != 1 || len(device.HAIdentifiers) != 1 || device.HAIdentifiers[0] != "ajaxbridge_A0F80D_zone_"+expected.Zone {
+				t.Fatalf("cycle %d zone %s merged: %#v", cycle, expected.Zone, device)
+			}
+			if command, ok := device.RawCommands[expected.JeedomCommandIDs[0]]; !ok || command.DeviceSlug != device.DeviceSlug {
+				t.Fatalf("cycle %d wrong command owner in zone %s: %#v", cycle, expected.Zone, command)
+			}
+		}
+	}
+}
+
 func TestCatalogResolverLinksConfiguredAccountName(t *testing.T) {
 	catalog := testCatalog(t, devicecatalog.Device{Account: "A0F80D", Zone: "1", Name: "Relay"})
 	resolver := NewCatalogResolver(catalog, CatalogResolverConfig{AccountNames: []string{"Будинок"}})

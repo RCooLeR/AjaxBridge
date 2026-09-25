@@ -153,6 +153,28 @@ Variables:
 
 AjaxBridge keeps the normalized Jeedom mirror in memory while it runs and, by default, persists that mirror to `data/jeedom.json`. The file contains discovered Jeedom devices, command metadata, action metadata, and the latest normalized values.
 
+Cached values are already in canonical units. Restart and metadata reconciliation preserve them exactly; Relay voltage transport scaling applies only to incoming raw observations or once when migrating an older fallback metric. Values previously damaged by repeated scaling cannot be safely repaired by guessing a multiplier: refresh them from a verified source observation. Ambiguous device-name aliases do not establish SIA ownership; use explicit Jeedom command IDs for same-name physical devices.
+
+Current, power and energy require explicit supported source units. `source_unit` and `source_unit_known` preserve whether Jeedom supplied a unit, including an explicit blank. Blank/unverified current, power and energy remain numeric `current_raw` / `power_raw` / `energy_raw` diagnostics without a physical device class or an invented A/W/kWh unit. Logical IDs such as `currentMA` and `powerWtH` do not establish scaling because Jeedom can apply value offsets. Older caches did not distinguish supplied units from defaults: their ambiguous current/power/energy units are deliberately removed, while numbers remain unchanged, until fresh metadata confirms units. Omitted units on value-only events preserve a verified contract; explicit blank units clear it. Changing physical units requires a new numeric observation rather than relabeling a retained number. No magnitude-based scaling is applied.
+
+An explicit energy unit such as Wh or kWh takes precedence over the legacy `powerWtH` logical ID, `POWER` generic type and translated power labels. The bridge publishes an energy sensor with `total_increasing`, preserving the source number, observation time and MQTT command unique ID. Energy does not produce a watts metric. The official Socket template already applies `/1000` to `currentMA` (A) and `powerWtH` (kWh); do not divide those published values again. Its separate `power` command historically estimates power from voltage times current, rather than independently measuring active power.
+
+### Existing Home Assistant electrical history
+
+Verified current, power and energy contracts remain discoverable when their value is unknown, including while waiting for a new observation after a unit correction. Their command unique ID and discovery topic stay unchanged. Unknown values do not become zero or receive a fabricated observation time. Other never-valued measurement families and unverified electrical mappings retain their existing cleanup policy.
+
+Before changing source units, export the affected statistics and inspect the actual Jeedom command's unit and `calculValueOffset`; MQTT Manager discovery omits that formula. The read-only [electrical audit helper](../../Jeedom/tools/README.md) can collect these fields locally. For an unchanged raw WallSwitch contract, declare mA and Wh at the source without changing its numbers or formula, then republish MQTT Manager discovery. Home Assistant can display mA in A through the sensor's unit option.
+
+Do not clear historical statistics or change their unit to blank just to dismiss a repair. If an entire stored A-labeled series is proven to contain raw mA, correct its statistics metadata to mA while preserving the numeric rows; Home Assistant then converts it to the selected A display unit. Check for newly recorded A-converted or mixed-scale intervals before applying any whole-series correction. Old recorder state-history attributes are separate from statistics and are not rewritten by a metadata repair.
+
+For a cumulative `powerWtH` counter formerly mislabeled W, correct the quantity to energy, not instantaneous power. In Home Assistant 2026.9.3, changing `measurement` to `total_increasing` preserves old rows but removes mean/min/max from normal queries for that sensor. Archive the exact historical hourly mean/min/max in a separate named statistic and graph before changing its metadata to Wh. Preserve short-term data in the export as well; hourly means cannot reconstruct exact historical consumption or counter resets. Keep the existing MQTT unique ID for future energy observations.
+
+Check Recorder exclusions before expecting new statistics. An excluded energy sensor will not undergo normal statistics compilation, so correcting its unit alone can leave a mean-type mismatch from its old measurement history. Restore recording only if desired; in Home Assistant 2026.9.3, changing Recorder configuration requires a restart, followed by successful statistics compilation.
+
+If that migration removes the only evidence for a cached WallSwitch state, its state becomes unknown until actual feedback or an explicit control establishes it. Real state/event feedback is rebuilt normally. Successful optimistic controls now persist `last_control_state_at` and `last_control_state`, allowing their matching cached state to survive this migration. Legacy request timestamps alone are insufficient: they were also recorded for failed requests. Unknown is not replaced with off, and raw load values cannot reestablish on.
+
+If retained MQTT discovery has the correct device identifiers but Home Assistant still attaches an existing entity to its previous device, back up the registry and compare the entity's `unique_id` with the retained discovery payload first. Reload the MQTT integration through Home Assistant after discovery is consistent. Verify that the existing `entity_id` now belongs to the intended device and that the other owners are unchanged. Do not delete entities or edit `.storage` files on a running Home Assistant instance to repair this mismatch; reloading preserves entity IDs and history.
+
 On startup, AjaxBridge loads this cache before subscribing to Jeedom MQTT topics. On every MQTT broker connect or reconnect, it republishes:
 
 - retained Ajax/SIA account and zone discovery/state
@@ -162,7 +184,7 @@ On startup, AjaxBridge loads this cache before subscribing to Jeedom MQTT topics
 
 That means a normal bridge restart should not require forcing Jeedom MQTT Manager to resend eqLogic discovery. Force Jeedom discovery only when `data/jeedom.json` is missing, empty, stale, or you have changed Jeedom equipment/commands and want the bridge to learn the new command list immediately.
 
-An action-only WallSwitch starts as `unknown` when the cache has never learned its physical state. AjaxBridge learns and persists state from successful bridge/MQTT ON/OFF controls and recognized Ajax event codes. A positive power/current measurement can safely seed `ON`; a zero measurement does not prove `OFF` because an enabled relay may have no active load.
+An action-only WallSwitch starts as `unknown` when the cache has never learned its physical state. AjaxBridge learns and persists state from successful bridge/MQTT ON/OFF controls and recognized Ajax event codes. A positive power/current measurement with a verified physical unit can seed `ON`; raw diagnostics do not. A zero measurement does not prove `OFF` because an enabled relay may have no active load.
 
 ## Expected Jeedom Event Payload
 
@@ -212,25 +234,28 @@ Example:
   "jeedom_id": "7",
   "jeedom_device_type": "WallSwitch",
   "last_update": "2026-05-05T13:11:21+03:00",
-  "power_w": 120.5,
-  "current_a": 0.53,
+  "energy_wh": 78485,
+  "current_ma": 530,
   "voltage_v": 228,
   "online": true,
   "signal_level": "STRONG",
   "raw_commands": {
     "56": {
       "command_id": "56",
-      "name": "Power",
-      "raw_name": "Puissance",
-      "metric": "power_w",
+      "name": "Energy",
+      "raw_name": "Consommation",
+      "logical_id": "powerWtH",
+      "metric": "energy_wh",
       "component": "sensor",
       "topic": "jeedom/cmd/event/56",
       "type": "info",
       "subtype": "numeric",
-      "unit": "W",
-      "device_class": "power",
-      "state_class": "measurement",
-      "value": 120.5
+      "unit": "Wh",
+      "source_unit": "Wh",
+      "source_unit_known": true,
+      "device_class": "energy",
+      "state_class": "total_increasing",
+      "value": 78485
     }
   },
   "actions": {

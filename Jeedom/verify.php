@@ -1,5 +1,5 @@
 <?php
-// AjaxBridge packaging utility, MIT (../LICENSE). Read-only; no Jeedom bootstrap or network calls.
+// AjaxBridge packaging utility, MIT (LICENSE.MIT). Read-only; no Jeedom bootstrap or network calls.
 if (PHP_SAPI !== 'cli') { exit('CLI only'); }
 
 function fail($message) {
@@ -63,7 +63,13 @@ foreach ($manifest['files'] as $entry) {
     $path = $root . '/' . $entry['path'];
     if (!file_exists($path) && $entry['kind'] === 'added') { continue; }
     $accepted = array_filter(array($entry['baseline_sha256_lf'], $entry['source_sha256_lf'], $entry['packaged_sha256']));
-    if (!is_file($path) || !in_array(shaLf($path), $accepted, true)) {
+    // Older packaged revisions are accepted only by their exact recorded bytes.
+    $matches = is_file($path) && (
+        in_array(shaLf($path), $accepted, true)
+        || (isset($entry['previous_packaged_sha256'])
+            && hash_file('sha256', $path) === $entry['previous_packaged_sha256'])
+    );
+    if (!$matches) {
         fwrite(STDERR, 'REVIEW ' . $entry['path'] . "\n");
         $problems++;
     }

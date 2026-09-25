@@ -7,7 +7,35 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
+
+func TestMetricsNegotiatesOpenMetricsWithoutChangingLegacyScrapes(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	gauge := prometheus.NewGauge(prometheus.GaugeOpts{Name: "ajax_test_value", Help: "Test observation."})
+	registry.MustRegister(gauge)
+	gauge.Set(23.5)
+	handler := (&Server{reg: registry}).metricsHandler()
+	for _, tc := range []struct {
+		accept, contentType string
+		openMetrics         bool
+	}{
+		{"", "text/plain", false},
+		{"application/openmetrics-text; version=1.0.0", "application/openmetrics-text", true},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+		req.Header.Set("Accept", tc.accept)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), tc.contentType) {
+			t.Fatalf("Accept %q: status=%d content-type=%q", tc.accept, rec.Code, rec.Header().Get("Content-Type"))
+		}
+		if !strings.Contains(rec.Body.String(), "ajax_test_value 23.5") || strings.Contains(rec.Body.String(), "# EOF") != tc.openMetrics {
+			t.Fatalf("Accept %q: unexpected metrics body %q", tc.accept, rec.Body.String())
+		}
+	}
+}
 
 func TestWriteJSONDeclaresUTF8(t *testing.T) {
 	rec := httptest.NewRecorder()

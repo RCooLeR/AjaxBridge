@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/RCooLeR/AjaxBridge/internal/jeedom"
 	"github.com/RCooLeR/AjaxBridge/internal/state"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -183,18 +184,20 @@ ajax_zone_trouble_active{account="0001",device="ri1",device_events="burglary,tam
 func TestJeedomNumericMetrics(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	m := New(registry)
-	m.ObserveJeedomCommand("serverna", "Puissance", "56", "power_w", 123.4, time.Unix(500, 0))
+	store := jeedom.NewStore("keep_last")
+	store.Apply(jeedom.Event{CommandID: "56", DeviceName: "serverna", CommandName: "Puissance", Subtype: "numeric", Unit: "W", Value: []byte(`123.4`), ReceivedAt: time.Unix(500, 0)})
+	m.SetJeedomStore(store)
 
 	expected := `
 # HELP ajax_jeedom_command_value Last numeric value reported by a Jeedom command.
 # TYPE ajax_jeedom_command_value gauge
-ajax_jeedom_command_value{command="Puissance",command_id="56",device="serverna",metric="power_w"} 123.4
+ajax_jeedom_command_value{command="Power",command_id="56",device="serverna",metric="power_w"} 123.4
 # HELP ajax_jeedom_device_power_watts Last Jeedom power value per device.
 # TYPE ajax_jeedom_device_power_watts gauge
 ajax_jeedom_device_power_watts{device="serverna"} 123.4
 # HELP ajax_jeedom_last_update_timestamp_seconds Unix timestamp for the last Jeedom command update.
 # TYPE ajax_jeedom_last_update_timestamp_seconds gauge
-ajax_jeedom_last_update_timestamp_seconds{command="Puissance",command_id="56",device="serverna",metric="power_w"} 500
+ajax_jeedom_last_update_timestamp_seconds{command="Power",command_id="56",device="serverna",metric="power_w"} 500
 `
 	if err := testutil.GatherAndCompare(registry, strings.NewReader(expected), "ajax_jeedom_command_value", "ajax_jeedom_device_power_watts", "ajax_jeedom_last_update_timestamp_seconds"); err != nil {
 		t.Fatal(err)

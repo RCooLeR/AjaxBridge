@@ -103,6 +103,11 @@ export interface DeviceAction {
   service: string;
   stateLabel?: string;
   controlState?: DeviceControlState;
+  disabled?: boolean;
+  disabledReason?: string;
+  confirmation?: string;
+  observedStateEntityId?: string;
+  valvePositionEntityId?: string;
 }
 
 export type DeviceActionDomain = 'button' | 'switch' | 'lock' | 'valve';

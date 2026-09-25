@@ -15,7 +15,7 @@ AjaxBridge is an unofficial DIY open-source project for compatibility and integr
 
 ## Development
 
-Use Node.js 24.20.0 LTS and npm 12.0.2. The checked-in `.node-version` and `packageManager` fields record those versions.
+Use Node.js 24.21.0 LTS and npm 12.1.0. The checked-in `.node-version` and `packageManager` fields record those versions.
 
 ```bash
 npm ci
@@ -28,7 +28,7 @@ Useful commands:
 - `npm run check`: TypeScript 7 project build check
 - `npm run lint`: type-aware Oxlint checks, including React hooks and promise handling
 - `npm run build`: production build into `dist/`
-- `npm run verify`: run lint, type checking, and the production build
+- `npm run verify`: run regression tests, lint, type checking, and the production build
 - `npm run preview`: serve the built `dist/` output locally
 
 ## Build output
@@ -38,33 +38,46 @@ Useful commands:
 - `dist/ajaxbridge-lovelace.js`: the Home Assistant module that registers both cards
 - `dist/assets/*`: JS chunks, CSS, icons, and room assets used by the module
 - `dist/index.html`: standalone browser preview
+- `dist/.vite/manifest.json`: Vite's entry, chunk, and asset manifest
 - `dist/.vite/license.md`: generated third-party dependency license metadata
 
 Copy the full `dist/` contents into Home Assistant, not only `ajaxbridge-lovelace.js`.
 
 ## Home Assistant install
 
-1. Build the UI:
+1. Build and verify the UI:
 
 ```bash
-npm run build
+npm run verify
 ```
 
-2. Copy `dist/` into a folder under Home Assistant `www`, for example:
+2. Stage the complete build as an immutable release under Home Assistant `www`. Run from `ha-cards`, replacing the output path with the mounted or local HA configuration directory:
 
-```text
-<ha-config>/www/ajaxbridge-lovelace/
+```bash
+node scripts/dashboard-release.mjs prepare --dist dist --out <ha-config>/www/ajax/releases
 ```
 
-3. Register the resource:
+The helper uses only Node built-ins. It copies every build file into `releases/<sha256>/` and writes `release.json` with each file's path, byte length, and SHA-256. The release ID depends on the sorted paths and exact file bytes, including chunks, CSS, images, and Vite metadata. Repeating preparation reuses an identical release; changed or missing files in an existing release cause an error. Symlinks and unsafe paths are rejected. Save the printed `manifestPath` for verification. If staging locally first, copy the entire release directory, including hidden `.vite` files, to the same `www/ajax/releases/<sha256>/` path on HA.
+
+3. Verify the files actually served by Home Assistant. Use the `manifestPath` printed above and the browser-facing HA URL:
+
+```bash
+node scripts/dashboard-release.mjs verify --manifest <release-dir>/release.json --base-url https://ha.example/local/ajax/releases
+```
+
+Verification fetches every manifest file from `<base-url>/<sha256>/`, requires HTTP 200 without redirects, compares exact byte lengths and hashes, and checks JavaScript MIME types. HTML responses masquerading as JavaScript are rejected. A failure exits with a nonzero status and prints no resource URL. No HA resource is activated or changed by either command.
+
+4. **Only after verification succeeds**, use its printed `resourceURL` to replace the previous AjaxBridge module resource in Home Assistant. Keep the old resource URL and release directory for rollback. For YAML-managed resources:
 
 ```yaml
 resources:
-  - url: /local/ajaxbridge-lovelace/ajaxbridge-lovelace.js
+  - url: https://ha.example/local/ajax/releases/<verified-sha256>/ajaxbridge-lovelace.js
     type: module
 ```
 
-4. Add one of the cards.
+Use the same HA origin as the dashboard. Replace the existing resource instead of keeping two AjaxBridge module versions active. Reload the dashboard after activation. To roll back, restore the previous verified resource URL and reload; do not overwrite files inside an existing release directory.
+
+5. Add one of the cards.
 
 Detailed card:
 

@@ -16,7 +16,6 @@ type MetricsRecorder interface {
 	ObserveJeedomMessage()
 	ObserveJeedomParseError()
 	ObserveJeedomEmptyValue()
-	ObserveJeedomCommand(device, command, commandID, metric string, value float64, lastUpdate time.Time)
 }
 
 type UpdateObserver interface {
@@ -160,9 +159,6 @@ func (s *Service) HandleMessage(ctx context.Context, topic string, payload []byt
 	}
 	if result.EmptyValue && s.metrics != nil {
 		s.metrics.ObserveJeedomEmptyValue()
-	}
-	if result.HasNumeric && s.metrics != nil {
-		s.metrics.ObserveJeedomCommand(result.Device.DeviceSlug, result.Command.Name, result.Command.CommandID, result.Mapping.Metric, result.NumericValue, evt.ReceivedAt)
 	}
 	if s.observer != nil {
 		s.observer.ObserveJeedomUpdate(ctx, result)

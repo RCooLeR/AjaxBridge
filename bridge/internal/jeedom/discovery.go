@@ -39,6 +39,7 @@ type DiscoveryCommand struct {
 	Type           string          `json:"type"`
 	Subtype        string          `json:"subtype"`
 	Unit           string          `json:"unit,omitempty"`
+	UnitProvided   bool            `json:"unit_provided,omitempty"`
 	Visible        bool            `json:"visible"`
 	Historized     bool            `json:"historized,omitempty"`
 	StateCommandID string          `json:"state_command_id,omitempty"`
@@ -65,7 +66,7 @@ type discoveryCommandPayload struct {
 	Name         string          `json:"name"`
 	Type         string          `json:"type"`
 	Subtype      string          `json:"subType"`
-	Unit         string          `json:"unite"`
+	Unit         *string         `json:"unite"`
 	IsVisible    json.RawMessage `json:"isVisible"`
 	IsHistorized json.RawMessage `json:"isHistorized"`
 	Value        json.RawMessage `json:"value"`
@@ -151,7 +152,8 @@ func discoveryCommand(mapKey, eqLogicID string, raw discoveryCommandPayload) Dis
 		Name:           RepairText(raw.Name),
 		Type:           strings.ToLower(strings.TrimSpace(raw.Type)),
 		Subtype:        strings.ToLower(strings.TrimSpace(raw.Subtype)),
-		Unit:           RepairText(raw.Unit),
+		Unit:           RepairText(sourceUnitValue(raw.Unit)),
+		UnitProvided:   raw.Unit != nil,
 		Visible:        rawBool(raw.IsVisible, false),
 		Historized:     rawBool(raw.IsHistorized, false),
 		StateCommandID: rawString(raw.Value),

@@ -41,6 +41,8 @@ type Device struct {
 	DeviceSlug                     string             `json:"device_slug"`
 	BaseSlug                       string             `json:"base_slug,omitempty"`
 	LastUpdate                     time.Time          `json:"last_update"`
+	LastControlStateAt             time.Time          `json:"last_control_state_at,omitempty"`
+	LastControlState               bool               `json:"last_control_state,omitempty"`
 	Values                         map[string]any     `json:"values"`
 	RawCommands                    map[string]Command `json:"raw_commands"`
 	HAIdentifiers                  []string           `json:"ha_identifiers,omitempty"`
@@ -64,30 +66,32 @@ type Device struct {
 }
 
 type Command struct {
-	CommandID      string    `json:"command_id"`
-	EqLogicID      string    `json:"eq_logic_id,omitempty"`
-	ObjectName     string    `json:"object"`
-	Device         string    `json:"device"`
-	DeviceSlug     string    `json:"device_slug"`
-	Name           string    `json:"name"`
-	RawName        string    `json:"raw_name,omitempty"`
-	Metric         string    `json:"metric"`
-	Component      string    `json:"component"`
-	Topic          string    `json:"topic"`
-	Type           string    `json:"type"`
-	Subtype        string    `json:"subtype"`
-	Unit           string    `json:"unit,omitempty"`
-	DeviceClass    string    `json:"device_class,omitempty"`
-	StateClass     string    `json:"state_class,omitempty"`
-	EntityCategory string    `json:"entity_category,omitempty"`
-	LogicalID      string    `json:"logical_id,omitempty"`
-	GenericType    string    `json:"generic_type,omitempty"`
-	Visible        bool      `json:"visible,omitempty"`
-	Historized     bool      `json:"historized,omitempty"`
-	Value          any       `json:"value,omitempty"`
-	LastUpdate     time.Time `json:"last_update"`
-	LastValueAt    time.Time `json:"last_value_at,omitempty"`
-	EmptyValue     bool      `json:"empty_value,omitempty"`
+	CommandID       string    `json:"command_id"`
+	EqLogicID       string    `json:"eq_logic_id,omitempty"`
+	ObjectName      string    `json:"object"`
+	Device          string    `json:"device"`
+	DeviceSlug      string    `json:"device_slug"`
+	Name            string    `json:"name"`
+	RawName         string    `json:"raw_name,omitempty"`
+	Metric          string    `json:"metric"`
+	Component       string    `json:"component"`
+	Topic           string    `json:"topic"`
+	Type            string    `json:"type"`
+	Subtype         string    `json:"subtype"`
+	Unit            string    `json:"unit,omitempty"`
+	SourceUnit      string    `json:"source_unit,omitempty"`
+	SourceUnitKnown bool      `json:"source_unit_known,omitempty"`
+	DeviceClass     string    `json:"device_class,omitempty"`
+	StateClass      string    `json:"state_class,omitempty"`
+	EntityCategory  string    `json:"entity_category,omitempty"`
+	LogicalID       string    `json:"logical_id,omitempty"`
+	GenericType     string    `json:"generic_type,omitempty"`
+	Visible         bool      `json:"visible,omitempty"`
+	Historized      bool      `json:"historized,omitempty"`
+	Value           any       `json:"value,omitempty"`
+	LastUpdate      time.Time `json:"last_update"`
+	LastValueAt     time.Time `json:"last_value_at,omitempty"`
+	EmptyValue      bool      `json:"empty_value,omitempty"`
 }
 
 type Action struct {
@@ -198,8 +202,12 @@ func (s *Store) Apply(evt Event) ApplyResult {
 	defer s.mu.Unlock()
 
 	knownDeviceSlug := s.commands[evt.CommandID]
+	sourceUnit, sourceUnitKnown := sourceUnitForEvent(evt, "", false)
 	if knownDevice := s.devices[knownDeviceSlug]; knownDevice != nil {
 		if knownCommand, ok := knownDevice.RawCommands[evt.CommandID]; ok {
+			sourceUnit, sourceUnitKnown = sourceUnitForEvent(evt, knownCommand.SourceUnit, knownCommand.SourceUnitKnown)
+			knownCommand.SourceUnit = sourceUnit
+			knownCommand.SourceUnitKnown = sourceUnitKnown
 			mapping = mappingFromCommandContract(knownCommand, mapping)
 		}
 	}
@@ -238,22 +246,24 @@ func (s *Store) Apply(evt Event) ApplyResult {
 	transferred, previousSlugs, transferredCommand, ownershipChanged := s.takeCommandFromOtherOwnersLocked(evt.CommandID, deviceSlug)
 
 	command := Command{
-		CommandID:      evt.CommandID,
-		ObjectName:     evt.ObjectName,
-		Device:         evt.DeviceName,
-		DeviceSlug:     deviceSlug,
-		Name:           EnglishCommandName(firstNonEmpty(evt.CommandName, evt.Name), mapping, evt.CommandID),
-		RawName:        firstNonEmpty(evt.CommandName, evt.Name),
-		Metric:         mapping.Metric,
-		Component:      mapping.Component,
-		Topic:          evt.Topic,
-		Type:           evt.Type,
-		Subtype:        evt.Subtype,
-		Unit:           mapping.Unit,
-		DeviceClass:    mapping.DeviceClass,
-		StateClass:     mapping.StateClass,
-		EntityCategory: mapping.EntityCategory,
-		LastUpdate:     now,
+		CommandID:       evt.CommandID,
+		ObjectName:      evt.ObjectName,
+		Device:          evt.DeviceName,
+		DeviceSlug:      deviceSlug,
+		Name:            EnglishCommandName(firstNonEmpty(evt.CommandName, evt.Name), mapping, evt.CommandID),
+		RawName:         firstNonEmpty(evt.CommandName, evt.Name),
+		Metric:          mapping.Metric,
+		Component:       mapping.Component,
+		Topic:           evt.Topic,
+		Type:            evt.Type,
+		Subtype:         evt.Subtype,
+		Unit:            mapping.Unit,
+		SourceUnit:      sourceUnit,
+		SourceUnitKnown: sourceUnitKnown,
+		DeviceClass:     mapping.DeviceClass,
+		StateClass:      mapping.StateClass,
+		EntityCategory:  mapping.EntityCategory,
+		LastUpdate:      now,
 	}
 	existing, hasExisting := device.RawCommands[evt.CommandID]
 	if transferredCommand {
@@ -273,7 +283,13 @@ func (s *Store) Apply(evt Event) ApplyResult {
 		command.Value = existing.Value
 		command.LastValueAt = existing.LastValueAt
 		command.EmptyValue = existing.EmptyValue
-		seedDeviceValueFromCommand(device, &command, existing, mapping)
+		if electricalRequiresFreshValue(existing, mapping) {
+			command.Value = nil
+			command.LastValueAt = time.Time{}
+			command.EmptyValue = true
+		} else {
+			seedDeviceValueFromCommand(device, &command, existing, mapping)
+		}
 	}
 
 	result := ApplyResult{
@@ -463,42 +479,52 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 	})
 	for _, commandID := range infoCommandIDs {
 		info := discovery.InfoCommands[commandID]
-		mapping := MappingFor(Event{
-			Topic:       "jeedom/cmd/event/" + info.CommandID,
-			CommandID:   info.CommandID,
-			LogicalID:   info.LogicalID,
-			GenericType: info.GenericType,
-			ObjectName:  discovery.ObjectName,
-			DeviceName:  discovery.Name,
-			CommandName: info.Name,
-			Name:        info.Name,
-			Type:        info.Type,
-			Subtype:     info.Subtype,
-			Unit:        info.Unit,
-			ReceivedAt:  now,
-		})
+		evt := Event{
+			Topic:        "jeedom/cmd/event/" + info.CommandID,
+			CommandID:    info.CommandID,
+			LogicalID:    info.LogicalID,
+			GenericType:  info.GenericType,
+			ObjectName:   discovery.ObjectName,
+			DeviceName:   discovery.Name,
+			CommandName:  info.Name,
+			Name:         info.Name,
+			Type:         info.Type,
+			Subtype:      info.Subtype,
+			Unit:         info.Unit,
+			UnitProvided: info.UnitProvided,
+			ReceivedAt:   now,
+		}
+		sourceUnit, sourceUnitKnown := sourceUnitForEvent(evt, "", false)
+		if owner := s.devices[s.commands[info.CommandID]]; owner != nil {
+			knownCommand := owner.RawCommands[info.CommandID]
+			sourceUnit, sourceUnitKnown = sourceUnitForEvent(evt, knownCommand.SourceUnit, knownCommand.SourceUnitKnown)
+		}
+		evt.Unit = sourceUnit
+		mapping := MappingFor(evt)
 		command := Command{
-			CommandID:      info.CommandID,
-			EqLogicID:      firstNonEmpty(info.EqLogicID, discovery.EqLogicID),
-			ObjectName:     discovery.ObjectName,
-			Device:         discovery.Name,
-			DeviceSlug:     deviceSlug,
-			Name:           EnglishCommandName(info.Name, mapping, info.CommandID),
-			RawName:        info.Name,
-			Metric:         mapping.Metric,
-			Component:      mapping.Component,
-			Topic:          "jeedom/cmd/event/" + info.CommandID,
-			Type:           info.Type,
-			Subtype:        info.Subtype,
-			Unit:           mapping.Unit,
-			DeviceClass:    mapping.DeviceClass,
-			StateClass:     mapping.StateClass,
-			EntityCategory: mapping.EntityCategory,
-			LogicalID:      info.LogicalID,
-			GenericType:    info.GenericType,
-			Visible:        info.Visible,
-			Historized:     info.Historized,
-			LastUpdate:     now,
+			CommandID:       info.CommandID,
+			EqLogicID:       firstNonEmpty(info.EqLogicID, discovery.EqLogicID),
+			ObjectName:      discovery.ObjectName,
+			Device:          discovery.Name,
+			DeviceSlug:      deviceSlug,
+			Name:            EnglishCommandName(info.Name, mapping, info.CommandID),
+			RawName:         info.Name,
+			Metric:          mapping.Metric,
+			Component:       mapping.Component,
+			Topic:           "jeedom/cmd/event/" + info.CommandID,
+			Type:            info.Type,
+			Subtype:         info.Subtype,
+			Unit:            mapping.Unit,
+			SourceUnit:      sourceUnit,
+			SourceUnitKnown: sourceUnitKnown,
+			DeviceClass:     mapping.DeviceClass,
+			StateClass:      mapping.StateClass,
+			EntityCategory:  mapping.EntityCategory,
+			LogicalID:       info.LogicalID,
+			GenericType:     info.GenericType,
+			Visible:         info.Visible,
+			Historized:      info.Historized,
+			LastUpdate:      now,
 		}
 		transferred, movedSlugs, transferredCommand, _ := s.takeCommandFromOtherOwnersLocked(info.CommandID, deviceSlug)
 		for slug := range movedSlugs {
@@ -524,9 +550,15 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 			} else if existing.LastUpdate.After(command.LastUpdate) {
 				command.LastUpdate = existing.LastUpdate
 			}
-			seedDeviceValueFromCommand(device, &command, existing, mapping)
+			if electricalRequiresFreshValue(existing, mapping) {
+				command.Value = nil
+				command.LastValueAt = time.Time{}
+				command.EmptyValue = true
+			} else {
+				seedDeviceValueFromCommand(device, &command, existing, mapping)
+			}
 		}
-		if !EmptyRawValue(info.Value) && (!hasExisting || existing.LastValueAt.IsZero()) {
+		if !EmptyRawValue(info.Value) && (!hasExisting || existing.LastValueAt.IsZero() || electricalRequiresFreshValue(existing, mapping)) {
 			if value, ok := mappedValue(Event{Value: info.Value}, mapping, deviceTypeForNormalization(*device)); ok {
 				device.Values[mapping.Metric] = value
 				command.Value = value
@@ -1341,7 +1373,7 @@ func seedDeviceValueFromCommand(device *Device, command *Command, existing Comma
 	}
 	value := command.Value
 	if existing.Metric != mapping.Metric || existing.Component != mapping.Component {
-		mapped, ok := mappedAnyValue(command.Value, mapping, deviceTypeForNormalization(*device))
+		mapped, ok := mappedStoredValue(command.Value, existing.Metric, mapping, deviceTypeForNormalization(*device))
 		if !ok {
 			return
 		}
@@ -1591,6 +1623,10 @@ func (s *Store) mergeDeviceIntoIdentityLocked(sourceSlug string, identity Device
 	for key, value := range source.Values {
 		target.Values[key] = value
 	}
+	if source.LastControlStateAt.After(target.LastControlStateAt) {
+		target.LastControlStateAt = source.LastControlStateAt
+		target.LastControlState = source.LastControlState
+	}
 	for commandID, command := range source.RawCommands {
 		if existing, ok := target.RawCommands[commandID]; ok {
 			command = commandWithNewestValue(existing, command)
@@ -1746,23 +1782,54 @@ func deviceHasMetric(device *Device, metric string) bool {
 }
 
 func mappedValue(evt Event, mapping Mapping, deviceType string) (any, bool) {
+	value, ok := mappedScalarValue(evt.Value, mapping)
+	if number, numeric := value.(float64); ok && numeric && mapping.Numeric {
+		return normalizeNumericValue(mapping, deviceType, number), true
+	}
+	return value, ok
+}
+
+// mappedScalarValue converts types and enum values without transport-unit
+// scaling. Stored Command.Value already uses the units of its persisted metric.
+func mappedScalarValue(raw json.RawMessage, mapping Mapping) (any, bool) {
 	switch {
 	case mapping.Timestamp:
-		return timestampRawValue(evt.Value)
+		return timestampRawValue(raw)
 	case mapping.Numeric:
-		value, ok := NumericRawValue(evt.Value)
+		value, ok := NumericRawValue(raw)
 		if !ok || !finiteNumericValue(value) {
 			return 0, false
 		}
-		return normalizeNumericValue(mapping, deviceType, value), true
+		return value, true
 	case mapping.Binary:
-		return BoolRawValueForMapping(evt.Value, mapping)
+		return BoolRawValueForMapping(raw, mapping)
 	default:
-		return StringRawValue(evt.Value)
+		return StringRawValue(raw)
 	}
 }
 
 func mappingFromCommandContract(command Command, fallback Mapping) Mapping {
+	if energyCommandContract(command) {
+		// Unit-only refreshes must update an established energy contract too;
+		// mapped/cache units without source provenance are not evidence.
+		unit := ""
+		if command.SourceUnitKnown {
+			unit = command.SourceUnit
+		}
+		if mapping, ok := contractMappingFor(Event{
+			LogicalID: command.LogicalID, GenericType: command.GenericType,
+		}, unit); ok {
+			return mapping
+		}
+		return energyMapping(unit)
+	}
+	if kind := electricalMetricKind(command.Metric); kind != "" {
+		unit := ""
+		if command.SourceUnitKnown {
+			unit = command.SourceUnit
+		}
+		return electricalMapping(kind, unit)
+	}
 	if command.Metric == "" || command.Component == "" {
 		return fallback
 	}
@@ -1790,7 +1857,7 @@ func mappingFromCommandContract(command Command, fallback Mapping) Mapping {
 	return mapping
 }
 
-func mappedAnyValue(value any, mapping Mapping, deviceType string) (any, bool) {
+func mappedStoredValue(value any, previousMetric string, mapping Mapping, deviceType string) (any, bool) {
 	if value == nil {
 		return nil, false
 	}
@@ -1798,7 +1865,14 @@ func mappedAnyValue(value any, mapping Mapping, deviceType string) (any, bool) {
 	if err != nil {
 		return nil, false
 	}
-	return mappedValue(Event{Value: raw}, mapping, deviceType)
+	mapped, ok := mappedScalarValue(raw, mapping)
+	if number, numeric := mapped.(float64); ok && numeric && mapping.Numeric && previousMetric != mapping.Metric {
+		// A legacy fallback metric did not apply the canonical metric's
+		// transport conversion. Migrate it once; subsequent loads see the
+		// canonical metric and preserve its value, regardless of metadata edits.
+		return normalizeNumericValue(mapping, deviceType, number), true
+	}
+	return mapped, ok
 }
 
 func timestampRawValue(value json.RawMessage) (string, bool) {
@@ -2005,7 +2079,7 @@ func rebuildDerivedValuesForMetricChange(device *Device, metric string) {
 	}
 	rebuildState := metric == "state" ||
 		(metric == "event_code" && (isWallSwitchDevice(*device) || isWaterStopDevice(*device))) ||
-		((metric == "current_a" || metric == "power_w") && isWallSwitchDevice(*device)) ||
+		(physicalElectricalMetric(metric) && isWallSwitchDevice(*device)) ||
 		(metric == "valve_position" && isWaterStopDevice(*device))
 	rebuildGridPower := metric == "grid_power" ||
 		(metric == "event_code" && isTransmitterDevice(*device))
@@ -2074,7 +2148,7 @@ func rebuildDerivedValuesForMetricChange(device *Device, metric string) {
 				state = derived
 				stateFound = true
 			}
-			if isWallSwitchDevice(*device) && (mapping.Metric == "current_a" || mapping.Metric == "power_w") {
+			if isWallSwitchDevice(*device) && physicalElectricalMetric(mapping.Metric) {
 				if load, ok := numericValue(command.Value); ok && load > 0 {
 					state = true
 					stateFound = true
@@ -2154,7 +2228,7 @@ func derivedStateSourcePriority(mapping Mapping, device Device) int {
 		if isWallSwitchDevice(device) || isWaterStopDevice(device) {
 			return 2
 		}
-	case "current_a", "power_w":
+	case "current_a", "current_ma", "current_ua", "power_w", "power_kw", "power_mw":
 		if isWallSwitchDevice(device) {
 			return 1
 		}
@@ -2286,9 +2360,7 @@ func applyDerivedWallSwitchStateFromLoad(mapping Mapping, device *Device, value 
 	if device == nil || !isWallSwitchDevice(*device) {
 		return
 	}
-	switch mapping.Metric {
-	case "current_a", "power_w":
-	default:
+	if !physicalElectricalMetric(mapping.Metric) {
 		return
 	}
 	load, ok := numericValue(value)
@@ -2643,12 +2715,36 @@ func (s *Store) Commands() []Command {
 			continue
 		}
 		command, ok := device.RawCommands[commandID]
-		if ok {
+		if ok && command.CommandID != "" {
 			commands = append(commands, command)
 		}
 	}
+	// Physical commands have a globally unique Jeedom ID and must use the
+	// canonical owner above. Derived observations have no command ID: their
+	// raw map keys (for example grid_power) are only unique within a device.
+	// List every such observation without changing the command lookup index.
+	for _, device := range s.devices {
+		if device == nil {
+			continue
+		}
+		for _, command := range device.RawCommands {
+			if command.CommandID == "" {
+				commands = append(commands, command)
+			}
+		}
+	}
 	sort.Slice(commands, func(i, j int) bool {
-		return commands[i].CommandID < commands[j].CommandID
+		left, right := commands[i], commands[j]
+		if left.CommandID != right.CommandID {
+			return left.CommandID < right.CommandID
+		}
+		if left.DeviceSlug != right.DeviceSlug {
+			return left.DeviceSlug < right.DeviceSlug
+		}
+		if left.Metric != right.Metric {
+			return left.Metric < right.Metric
+		}
+		return left.Name < right.Name
 	})
 	return commands
 }
@@ -2832,6 +2928,8 @@ func (s *Store) RecordOptimisticControlState(action Action, at time.Time) (Devic
 		device.Values = make(map[string]any)
 	}
 	device.Values["state"] = stateValue
+	device.LastControlStateAt = at
+	device.LastControlState = stateValue
 	device.LastUpdate = at
 	s.bumpDevicePublishRevisionLocked(device)
 	return copyDevice(*device), true

@@ -666,33 +666,19 @@ Duplicate devices:
 - Set `AJAXBRIDGE_JEEDOM_ACCOUNT_NAMES` for hub/system Jeedom equipment.
 - Do not delete SIA signal entities just to solve Jeedom duplication. Linked Jeedom commands that duplicate SIA security/status values are cleaned automatically; the SIA entity remains authoritative.
 - AjaxBridge also publishes retained cleanup for old SIA discovery object id formats, including old `ajax2prometheus` topics, no-account zone ids such as `zone_13_alarm_signal`, and old signal ids such as `zone_a0f80d_13_firmware`.
-- Devices shown as manufacturer `Ajax via Jeedom` and model `Jeedom MQTT Bridge` are unlinked Jeedom discovery entries. If the same physical device also exists as `Ajax Systems`, clear old retained discovery and republish linked discovery.
+- Devices shown as manufacturer `Ajax via Jeedom` and model `Jeedom MQTT Bridge` are unlinked Jeedom discovery entries. If the same physical device also exists as `Ajax Systems`, correct command ownership and allow the bridge to reconcile its discovery.
 - Restart AjaxBridge. If `AJAXBRIDGE_JEEDOM_STORE_PATH` points at persisted storage such as `/data/jeedom.json`, AjaxBridge reloads the last Jeedom command cache and republishes linked discovery/state automatically. Force Jeedom MQTT Manager to republish eqLogic discovery only if the cache is empty or stale.
-- Reload or restart Home Assistant MQTT after stale retained topics are cleared.
-- If the duplicate is the same SIA entity with a Home Assistant suffix such as `_2`, clear stale retained MQTT discovery with Mosquitto clients, then reload or restart Home Assistant MQTT.
+- Compare the Home Assistant entity's `unique_id` with retained discovery before removing anything. A suffix such as `_2` does not by itself prove a duplicate. If discovery identifies the correct device but the registry still points to an old owner, back up the registry and reload the MQTT integration to reconcile it while preserving entity identity.
 
-Alternative shell cleanup with Mosquitto clients:
+Inspect retained discovery with Mosquitto clients:
 
 ```bash
-BROKER=192.168.100.100
+BROKER=mqtt.example.test
 
-mosquitto_sub -h "$BROKER" -t 'homeassistant/+/ajaxbridge/+/config' -C 100000 -W 3 -F '%t' \
-  | grep -E '/jeedom_(cmd|control)_' \
-  | sort -u \
-  | while read -r t; do
-      [ -n "$t" ] && mosquitto_pub -h "$BROKER" -t "$t" -r -n
-    done
-
-for topic in 'ajaxbridge/jeedom/devices/+/state' 'homeassistant/+/ajax2prometheus/#' 'ajax2prometheus/#'; do
-  mosquitto_sub -h "$BROKER" -t "$topic" -C 100000 -W 3 -F '%t' \
-    | sort -u \
-    | while read -r t; do
-        [ -n "$t" ] && mosquitto_pub -h "$BROKER" -t "$t" -r -n
-      done
-done
+mosquitto_sub -h "$BROKER" -t 'homeassistant/+/ajaxbridge/+/config' -W 3 -v
 ```
 
-If the broker requires credentials, add `-u mqtt-user -P mqtt-password` to both `mosquitto_sub` and `mosquitto_pub`.
+If the broker requires credentials, use the same MQTT credentials configured for your deployment. Remove an exact retained topic manually only after identifying it as obsolete and backing up its payload. Clearing every discovery or state topic can remove active entities and their registry settings; it is not a repair for electrical units or statistics. See [electrical history guidance](jeedom.md#existing-home-assistant-electrical-history).
 
 Wrong names or rooms:
 
@@ -711,6 +697,6 @@ Jeedom control entity missing:
 
 Numeric Jeedom values missing:
 
-- Confirm `/jeedom/devices` contains `values.temperature_c`, `values.power_w`, `values.current_a`, or `values.voltage_v` for the expected device.
+- Compare `/jeedom/devices` and `/jeedom/commands` for the expected device. Electrical metric names follow verified units, for example `current_ma`, `current_a`, `energy_wh`, or `energy_kwh`. Unverified readings remain `current_raw` / `power_raw`; unknown readings are not replaced with zero.
 - Confirm `/jeedom/commands` contains the matching Jeedom command ids and that those ids are listed in `data/devices.json` under `jeedom_command_ids`.
 - If `data/jeedom.json` is empty or stale, force Jeedom MQTT Manager to republish eqLogic discovery and command events after changing mappings.

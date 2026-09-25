@@ -17,26 +17,27 @@ var (
 )
 
 type Event struct {
-	Topic       string          `json:"topic"`
-	CommandID   string          `json:"command_id"`
-	ObjectName  string          `json:"object"`
-	DeviceName  string          `json:"device"`
-	CommandName string          `json:"command"`
-	Name        string          `json:"name"`
-	LogicalID   string          `json:"logical_id"`
-	GenericType string          `json:"generic_type"`
-	Type        string          `json:"type"`
-	Subtype     string          `json:"subtype"`
-	Unit        string          `json:"unit"`
-	Value       json.RawMessage `json:"value"`
-	ReceivedAt  time.Time       `json:"received_at"`
-	RawPayload  json.RawMessage `json:"raw_payload"`
+	Topic        string          `json:"topic"`
+	CommandID    string          `json:"command_id"`
+	ObjectName   string          `json:"object"`
+	DeviceName   string          `json:"device"`
+	CommandName  string          `json:"command"`
+	Name         string          `json:"name"`
+	LogicalID    string          `json:"logical_id"`
+	GenericType  string          `json:"generic_type"`
+	Type         string          `json:"type"`
+	Subtype      string          `json:"subtype"`
+	Unit         string          `json:"unit"`
+	UnitProvided bool            `json:"unit_provided,omitempty"`
+	Value        json.RawMessage `json:"value"`
+	ReceivedAt   time.Time       `json:"received_at"`
+	RawPayload   json.RawMessage `json:"raw_payload"`
 }
 
 type payload struct {
 	Value          json.RawMessage `json:"value"`
 	HumanName      string          `json:"humanName"`
-	Unite          string          `json:"unite"`
+	Unite          *string         `json:"unite"`
 	Name           string          `json:"name"`
 	LogicalID      string          `json:"logicalId"`
 	LogicalIDAlt   string          `json:"logical_id"`
@@ -66,20 +67,21 @@ func ParseMessage(topic string, body []byte, receivedAt time.Time) (Event, error
 	}
 
 	return Event{
-		Topic:       topic,
-		CommandID:   commandID,
-		ObjectName:  RepairText(objectName),
-		DeviceName:  RepairText(deviceName),
-		CommandName: RepairText(commandName),
-		Name:        RepairText(raw.Name),
-		LogicalID:   RepairText(firstNonEmpty(raw.LogicalID, raw.LogicalIDAlt)),
-		GenericType: RepairText(firstNonEmpty(raw.GenericType, raw.GenericTypeAlt)),
-		Type:        strings.TrimSpace(raw.Type),
-		Subtype:     strings.TrimSpace(raw.Subtype),
-		Unit:        RepairText(raw.Unite),
-		Value:       append(json.RawMessage(nil), raw.Value...),
-		ReceivedAt:  receivedAt,
-		RawPayload:  append([]byte(nil), body...),
+		Topic:        topic,
+		CommandID:    commandID,
+		ObjectName:   RepairText(objectName),
+		DeviceName:   RepairText(deviceName),
+		CommandName:  RepairText(commandName),
+		Name:         RepairText(raw.Name),
+		LogicalID:    RepairText(firstNonEmpty(raw.LogicalID, raw.LogicalIDAlt)),
+		GenericType:  RepairText(firstNonEmpty(raw.GenericType, raw.GenericTypeAlt)),
+		Type:         strings.TrimSpace(raw.Type),
+		Subtype:      strings.TrimSpace(raw.Subtype),
+		Unit:         RepairText(sourceUnitValue(raw.Unite)),
+		UnitProvided: raw.Unite != nil,
+		Value:        append(json.RawMessage(nil), raw.Value...),
+		ReceivedAt:   receivedAt,
+		RawPayload:   append([]byte(nil), body...),
 	}, nil
 }
 

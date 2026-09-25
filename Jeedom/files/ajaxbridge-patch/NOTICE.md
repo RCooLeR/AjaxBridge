@@ -1,6 +1,6 @@
 # AjaxBridge patch for the Jeedom Ajax Systems plugin
 
-Bundle: 2026.09.24.1. Modified/packaged: 2026-09-24.
+Bundle: 2026.09.25.1. Modified/packaged: 2026-09-25.
 Upstream plugin author: Jeedom SAS (from plugin_info/info.json).
 Local modifications: AjaxBridge contributors.
 
@@ -38,6 +38,9 @@ modified program. See the bundle's LICENSING.md for evidence and details.
 - core/config/devices/*.json: added/extended telemetry templates for Button,
   SpaceControl, WaterStop, ReX, MultiTransmitter, LifeQualityLite, FireProtect
   families and WallSwitch state. Each supplied file identifies this patch.
+- WallSwitch.json: new currentMA and powerWtH commands explicitly use mA and
+  Wh without numeric conversion; the counter is named Consommation. Existing
+  command IDs, units, formulas and history are not migrated by synchronization.
 - Transmitter.json carries forward temperature already in the local baseline;
   it is included deliberately although absent from the subsequent Git diff.
 - Relay.json and Socket templates are not replaced. Relay uses the new shared
@@ -48,7 +51,8 @@ Telemetry commit: 92fee87fdc1762fd6143de6b4fd6c2ee3cd8ae2a.
 State commit: af5a742706f7185a4b018e94671d1b7ed8b0e731.
 These identify a local source tracker, not official Jeedom release tags.
 The package also normalizes text line endings to LF and adds modification
-notices; these packaging changes do not alter command definitions or PHP logic.
+notices. The 2026.09.25.1 WallSwitch unit correction is local to this package,
+after the source commits above; PHP logic and Socket templates are unchanged.
 
 The complete list of runtime files and source/base/package hashes is provided in
 the bundle's manifest.json. METRICS.md documents model-specific fields and known

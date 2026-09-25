@@ -71,11 +71,12 @@ func TestServiceEmptyValueIncrementsCounter(t *testing.T) {
 	}
 }
 
-func TestServiceNumericValueUpdatesMetrics(t *testing.T) {
+func TestServiceNumericValueUpdatesStoreForMetrics(t *testing.T) {
 	metrics := &fakeMetrics{}
+	store := NewStore("keep_last")
 	service := NewService(
 		ServiceConfig{EventTopic: "jeedom/cmd/event/#"},
-		NewStore("keep_last"),
+		store,
 		nil,
 		nil,
 		metrics,
@@ -83,10 +84,13 @@ func TestServiceNumericValueUpdatesMetrics(t *testing.T) {
 		zerolog.Nop(),
 	)
 
-	service.HandleMessage(t.Context(), "jeedom/cmd/event/56", []byte(`{"value":"123.4","humanName":"[None][Server][Puissance]","unite":"","name":"Puissance","type":"info","subtype":"numeric"}`))
+	service.HandleMessage(t.Context(), "jeedom/cmd/event/56", []byte(`{"value":"123.4","humanName":"[None][Server][Puissance]","unite":"W","name":"Puissance","type":"info","subtype":"numeric"}`))
 
-	if metrics.commands != 1 {
-		t.Fatalf("commands = %d, want 1", metrics.commands)
+	if metrics.messages != 1 {
+		t.Fatalf("messages = %d, want 1", metrics.messages)
+	}
+	if got := store.Devices()[0].Values["power_w"]; got != float64(123.4) {
+		t.Fatalf("snapshot power_w = %v, want 123.4", got)
 	}
 }
 
@@ -114,7 +118,7 @@ func TestServiceRetainedStateCannotRegressFromOutOfOrderHandlers(t *testing.T) {
 
 	doneA := make(chan struct{})
 	go func() {
-		service.HandleMessage(t.Context(), "jeedom/cmd/event/56", []byte(`{"value":"1","humanName":"[None][Server][Puissance]","name":"Puissance","type":"info","subtype":"numeric"}`))
+		service.HandleMessage(t.Context(), "jeedom/cmd/event/56", []byte(`{"value":"1","humanName":"[None][Server][Puissance]","unite":"W","name":"Puissance","type":"info","subtype":"numeric"}`))
 		close(doneA)
 	}()
 	select {
@@ -123,7 +127,7 @@ func TestServiceRetainedStateCannotRegressFromOutOfOrderHandlers(t *testing.T) {
 		t.Fatal("older handler did not reach the post-Apply observer")
 	}
 
-	service.HandleMessage(t.Context(), "jeedom/cmd/event/56", []byte(`{"value":"2","humanName":"[None][Server][Puissance]","name":"Puissance","type":"info","subtype":"numeric"}`))
+	service.HandleMessage(t.Context(), "jeedom/cmd/event/56", []byte(`{"value":"2","humanName":"[None][Server][Puissance]","unite":"W","name":"Puissance","type":"info","subtype":"numeric"}`))
 	close(observer.release)
 	select {
 	case <-doneA:
@@ -338,7 +342,6 @@ type fakeMetrics struct {
 	messages    int
 	parseErrors int
 	emptyValues int
-	commands    int
 }
 
 func (m *fakeMetrics) ObserveJeedomMessage() {
@@ -351,10 +354,6 @@ func (m *fakeMetrics) ObserveJeedomParseError() {
 
 func (m *fakeMetrics) ObserveJeedomEmptyValue() {
 	m.emptyValues++
-}
-
-func (m *fakeMetrics) ObserveJeedomCommand(string, string, string, string, float64, time.Time) {
-	m.commands++
 }
 
 type fakeObserver struct {

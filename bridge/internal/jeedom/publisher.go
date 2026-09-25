@@ -673,10 +673,39 @@ func commandDiscoverable(command Command, device Device) bool {
 	case "event_source", "event", "event_code":
 		return false
 	}
-	if command.Component == ComponentSensor && measurementStateClass(command.StateClass) && !measurementCommandHasUsableValue(command, device) {
+	if command.Component == ComponentSensor && measurementStateClass(command.StateClass) &&
+		!measurementCommandHasUsableValue(command, device) && !verifiedElectricalDiscoveryContract(command) {
 		return false
 	}
 	return !deviceLinkedToSIA(device) || !siaOwnedJeedomMetric(command.Metric)
+}
+
+// A verified electrical contract remains discoverable while its first value or
+// a fresh value after a unit change is pending. Removing discovery here would
+// delete the stable command entity merely because the measurement is unknown.
+func verifiedElectricalDiscoveryContract(command Command) bool {
+	if !command.SourceUnitKnown || command.Component != ComponentSensor {
+		return false
+	}
+	var mapping Mapping
+	if command.DeviceClass == "energy" {
+		var ok bool
+		mapping, ok = energyMappingForUnit(command.SourceUnit)
+		if !ok {
+			return false
+		}
+	} else {
+		kind := electricalMetricKind(command.Metric)
+		if kind == "" {
+			return false
+		}
+		mapping = electricalMapping(kind, command.SourceUnit)
+		if mapping.DeviceClass != "current" && mapping.DeviceClass != "power" {
+			return false
+		}
+	}
+	return command.Metric == mapping.Metric && command.Unit == mapping.Unit &&
+		command.DeviceClass == mapping.DeviceClass && command.StateClass == mapping.StateClass
 }
 
 func measurementCommandHasUsableValue(command Command, device Device) bool {

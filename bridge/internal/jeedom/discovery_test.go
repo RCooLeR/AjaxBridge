@@ -186,8 +186,8 @@ func TestStoreApplyDiscoverySeedsWallSwitchOnFromPositiveLoad(t *testing.T) {
 	  "isVisible":1,
 	  "isEnable":1,
 	  "cmds":{
-	    "346":{"id":346,"logicalId":"powerWTh","name":"Puissance","type":"info","subType":"numeric","currentValue":15329},
-	    "347":{"id":347,"logicalId":"currentMA","name":"Courant","type":"info","subType":"numeric","currentValue":1940},
+	    "346":{"id":346,"logicalId":"powerWTh","name":"Puissance","type":"info","subType":"numeric","unite":"W","currentValue":15329},
+	    "347":{"id":347,"logicalId":"currentMA","name":"Courant","type":"info","subType":"numeric","unite":"A","currentValue":1940},
 	    "348":{"id":348,"logicalId":"SWITCH_ON","name":"On","type":"action","subType":"other"},
 	    "349":{"id":349,"logicalId":"SWITCH_OFF","name":"Off","type":"action","subType":"other"}
 	  }

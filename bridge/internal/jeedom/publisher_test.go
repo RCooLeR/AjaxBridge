@@ -241,7 +241,7 @@ func TestPublishDeviceCleansOneRemovedButtonWhileKeepingOthers(t *testing.T) {
 	}
 }
 
-func TestFirstValidZeroMeasurementCausesRediscovery(t *testing.T) {
+func TestFirstValidZeroElectricalMeasurementKeepsDiscovery(t *testing.T) {
 	store := NewStore("keep_last")
 	discovered := store.ApplyDiscovery(Discovery{
 		EqLogicID:  "9",
@@ -266,8 +266,16 @@ func TestFirstValidZeroMeasurementCausesRediscovery(t *testing.T) {
 	if err := publisher.PublishDevice(t.Context(), discovered.Device); err != nil {
 		t.Fatal(err)
 	}
-	if payload, ok := mqtt.discovery[topic]; !ok || payload != "" {
-		t.Fatalf("initial discovery = %q present=%v, want retained cleanup", payload, ok)
+	initialConfig := mqtt.discovery[topic]
+	if initialConfig == "" {
+		t.Fatal("verified W contract should be discoverable before its first sample")
+	}
+	var initial DiscoveryConfig
+	if err := json.Unmarshal([]byte(initialConfig), &initial); err != nil {
+		t.Fatal(err)
+	}
+	if discovered.Device.RawCommands["180"].Value != nil || !discovered.Device.RawCommands["180"].LastValueAt.IsZero() {
+		t.Fatal("initial electrical discovery invented a sample")
 	}
 
 	updated := store.Apply(Event{
@@ -286,13 +294,13 @@ func TestFirstValidZeroMeasurementCausesRediscovery(t *testing.T) {
 	}
 	payload := mqtt.discovery[topic]
 	if payload == "" {
-		t.Fatal("first valid zero did not republish discovery")
+		t.Fatal("first valid zero removed electrical discovery")
 	}
 	var config DiscoveryConfig
 	if err := json.Unmarshal([]byte(payload), &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.UniqueID != "ajaxbridge_jeedom_cmd_180" || config.ValueTemplate != "{{ value_json.get('power_w') }}" {
+	if config.UniqueID != initial.UniqueID || config.UniqueID != "ajaxbridge_jeedom_cmd_180" || config.ValueTemplate != "{{ value_json.get('power_w') }}" {
 		t.Fatalf("rediscovery config = %#v", config)
 	}
 	stateTopic := "ajaxbridge/jeedom/devices/fence_power/state"

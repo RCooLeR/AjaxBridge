@@ -1,17 +1,5 @@
-import type { Device, EventItem, EventType, GlowTone } from '../models/dashboard';
+import type { Device, EventItem, GlowTone } from '../models/dashboard';
 import { DeviceCard } from './DeviceCard';
-
-const ISSUE_EVENT_TYPES = new Set<EventType>([
-  'alarm',
-  'device_offline',
-  'fire_detected',
-  'smoke_detected',
-  'leak_detected',
-  'gas_detected',
-  'tamper_detected',
-  'battery_low',
-  'power_lost',
-]);
 
 interface DeviceGridProps {
   devices: Device[];
@@ -20,23 +8,7 @@ interface DeviceGridProps {
   onSelectDevice: (deviceId: string | null) => void;
 }
 
-function getDeviceEventStatus(device: Device, events: EventItem[]): { label: string; tone: GlowTone } {
-  const latestIssueEvent = events.find((event) => event.deviceId === device.id && ISSUE_EVENT_TYPES.has(event.type));
-
-  if (latestIssueEvent) {
-    return {
-      label: latestIssueEvent.title,
-      tone: latestIssueEvent.tone,
-    };
-  }
-
-  if (!device.isOnline) {
-    return {
-      label: 'Device offline',
-      tone: 'red',
-    };
-  }
-
+function getDeviceEventStatus(device: Device): { label: string; tone: GlowTone } {
   if (device.attention) {
     return {
       label: device.status,
@@ -50,7 +22,7 @@ function getDeviceEventStatus(device: Device, events: EventItem[]): { label: str
   };
 }
 
-export function DeviceGrid({ devices, events, selectedDeviceId, onSelectDevice }: DeviceGridProps) {
+export function DeviceGrid({ devices, selectedDeviceId, onSelectDevice }: DeviceGridProps) {
   return (
     <section className="device-grid glass-panel">
       <div className="section-heading">
@@ -59,7 +31,7 @@ export function DeviceGrid({ devices, events, selectedDeviceId, onSelectDevice }
       </div>
       <div className="device-grid__list">
         {devices.map((device) => {
-          const eventStatus = getDeviceEventStatus(device, events);
+          const eventStatus = getDeviceEventStatus(device);
 
           return (
             <DeviceCard

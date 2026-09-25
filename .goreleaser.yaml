@@ -6,6 +6,7 @@ before:
   hooks:
     - go test ./bridge/...
     - npm --prefix ./ha-cards run verify
+    - python3 scripts/package-jeedom.py --version {{ .Version }} --timestamp {{ .CommitTimestamp }}
     - >-
       tar --sort=name --mtime=@{{ .CommitTimestamp }} --owner=0 --group=0
       --numeric-owner --format=gnu -czf ha-cards-dist.tar.gz -C ha-cards/dist .
@@ -37,6 +38,7 @@ checksum:
   algorithm: sha256
   extra_files:
     - glob: ./ha-cards-dist.tar.gz
+    - glob: ./AjaxBridge_{{ .Version }}_jeedom_patch.zip
 
 sboms:
   - id: archives
@@ -115,3 +117,4 @@ release:
     fail_on_error: true
   extra_files:
     - glob: ./ha-cards-dist.tar.gz
+    - glob: ./AjaxBridge_{{ .Version }}_jeedom_patch.zip

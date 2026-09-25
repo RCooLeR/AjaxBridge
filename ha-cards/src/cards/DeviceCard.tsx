@@ -45,7 +45,7 @@ export function DeviceCard({ device, eventStatusLabel, eventStatusTone, selected
             <div className="device-card__model">{device.model}</div>
           </div>
         </div>
-        <StatusBadge label={device.isOnline ? 'Online' : 'Offline'} tone={device.isOnline ? 'green' : 'red'} />
+        <StatusBadge label={device.connectivity} tone={device.isOnline ? 'green' : 'amber'} />
       </div>
       <div className="device-card__status-list">
         <div className="device-card__status-row">

@@ -187,6 +187,7 @@ func reconcilePersistedMappings(device *Device) {
 	sort.Strings(commandIDs)
 
 	oldMetrics := make(map[string]struct{})
+	demotedElectricalUnits := false
 	for _, commandID := range commandIDs {
 		command := device.RawCommands[commandID]
 		if command.CommandID == "" {
@@ -204,14 +205,28 @@ func reconcilePersistedMappings(device *Device) {
 			Subtype:     command.Subtype,
 			Unit:        command.Unit,
 		}
+		// Old caches stored mapped units, including invented A/W/kWh defaults.
+		// Without source provenance those units cannot safely be recovered.
+		// Keep their numeric values unchanged as raw diagnostics until Jeedom
+		// supplies explicit units; never guess scaling from their magnitude.
+		if command.SourceUnitKnown {
+			event.Unit = command.SourceUnit
+		} else if energyCommandContract(command) || electricalMetricKind(command.Metric) != "" || electricalMetricKind(MappingFor(event).Metric) != "" {
+			event.Unit = ""
+		}
 		mapping := MappingFor(event)
-		if mapping.fallback {
+		if mapping.fallback || energyCommandContract(command) {
+			// Energy contracts always require source-unit validation, even if a
+			// customized name happens to match another canonical measurement.
 			// Legacy cache entries do not have stable logical or generic IDs. If
 			// their display name was customized, keep the command-ID contract
 			// already persisted instead of replacing it with a name-based metric.
 			mapping = mappingFromCommandContract(command, mapping)
 		}
 		oldMetric := command.Metric
+		if physicalElectricalMetric(oldMetric) && electricalMetricKind(mapping.Metric) != "" && !physicalElectricalMetric(mapping.Metric) {
+			demotedElectricalUnits = true
+		}
 		if oldMetric != "" && oldMetric != mapping.Metric {
 			oldMetrics[oldMetric] = struct{}{}
 		}
@@ -223,7 +238,7 @@ func reconcilePersistedMappings(device *Device) {
 		command.StateClass = mapping.StateClass
 		command.EntityCategory = mapping.EntityCategory
 		if command.Value != nil {
-			if value, ok := mappedAnyValue(command.Value, mapping, deviceTypeForNormalization(*device)); ok {
+			if value, ok := mappedStoredValue(command.Value, oldMetric, mapping, deviceTypeForNormalization(*device)); ok {
 				command.Value = value
 				device.Values[mapping.Metric] = value
 				applyDerivedValuesFromEventCode(mapping, device, value, command.LastValueAt)
@@ -237,6 +252,15 @@ func reconcilePersistedMappings(device *Device) {
 		deleteUnreferencedMetric(device, metric)
 	}
 	preservePersistedState := hadPersistedState && hasActionOnlyToggleControl(device) && !hasObservedAuthoritativeToggleFeedback(device)
+	if demotedElectricalUnits && !hasRecordedControlState(device, persistedState) {
+		// Older caches cannot distinguish a successful control from a load
+		// inference: LastRequestedAt is also written for failed requests.
+		// Rebuild from actual feedback; otherwise leave the state unknown.
+		preservePersistedState = false
+		if !hasObservedAuthoritativeToggleFeedback(device) {
+			delete(device.Values, "state")
+		}
+	}
 	rebuildAllMetricValues(device)
 	if preservePersistedState {
 		device.Values["state"] = persistedState
