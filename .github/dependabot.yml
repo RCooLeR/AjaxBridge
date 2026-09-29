@@ -23,6 +23,11 @@ updates:
     directory: /ha-cards
     schedule:
       interval: weekly
+    # Keep Node declarations aligned with the supported runtime in .node-version.
+    ignore:
+      - dependency-name: "@types/node"
+        update-types:
+          - "version-update:semver-major"
     groups:
       npm-packages:
         patterns:
