@@ -1,6 +1,6 @@
 # AjaxBridge
 
-![AjaxBridge overview](https://raw.githubusercontent.com/RCooLeR/AjaxBridge/main/bridge/ajax-bridge.png)
+![AjaxBridge overview](https://raw.githubusercontent.com/RCooLeR/AjaxBridge/master/bridge/ajax-bridge.png)
 
 AjaxBridge is a small bridge for Ajax security hubs. It receives SIA DC-09 events, keeps the current alarm and zone state in memory, and exposes it through HTTP JSON, Prometheus metrics, MQTT state, and Home Assistant MQTT Discovery.
 

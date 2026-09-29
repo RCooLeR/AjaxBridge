@@ -165,4 +165,4 @@ sudo cp -a "$BACKUP_DIR/ajaxSystem" "$PLUGIN_DIR"
 
 Для перевірки фактичних одиниць, формул і кешованих значень старих електричних команд використовуйте [інструмент аудиту](./tools/README.md). Він нічого не зберігає й не виконує команди пристроїв. Вивід містить локальні ID обладнання й команд; перевірте його перед публікацією.
 
-Документація інтеграції: [Jeedom → AjaxBridge](https://github.com/RCooLeR/AjaxBridge/blob/main/bridge/docs/jeedom.md). Зміни цього комплекту: [CHANGELOG.md](./CHANGELOG.md).
+Документація інтеграції: [Jeedom → AjaxBridge](https://github.com/RCooLeR/AjaxBridge/blob/master/bridge/docs/jeedom.md). Зміни цього комплекту: [CHANGELOG.md](./CHANGELOG.md).
