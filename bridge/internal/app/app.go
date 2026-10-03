@@ -43,6 +43,14 @@ type App struct {
 	notifier  *notifications.Manager
 	jeedom    *jeedom.Store
 	jeedomPub *jeedom.Publisher
+
+	jeedomQueueMu sync.Mutex
+	jeedomQueue   chan jeedomPublishBatch
+}
+
+type jeedomPublishBatch struct {
+	devices []jeedom.Device
+	message string
 }
 
 func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
@@ -117,6 +125,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 	var jeedomStore *jeedom.Store
 	var jeedomController *jeedom.Controller
 	var jeedomPublisher *jeedom.Publisher
+	var jeedomQueue chan jeedomPublishBatch
 	if cfg.JeedomEnabled {
 		jeedomStoreLoaded := false
 		resolver := jeedom.NewCatalogResolver(devices, jeedom.CatalogResolverConfig{
@@ -158,6 +167,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 				RetainDiscovery:  cfg.JeedomRetainDiscovery,
 				Controls:         cfg.JeedomControlsEnabled,
 			}, mqttPublisher)
+			jeedomQueue = make(chan jeedomPublishBatch, 1)
 		}
 	}
 
@@ -176,6 +186,8 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 		notifier:  notifier,
 		jeedom:    jeedomStore,
 		jeedomPub: jeedomPublisher,
+
+		jeedomQueue: jeedomQueue,
 	}
 	notificationObserver := notificationObserver{app: application}
 	if jeedomController != nil {
@@ -240,6 +252,11 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 			stop()
 		}
 	})
+	if application.jeedomQueue != nil {
+		wg.Go(func() {
+			application.publishQueuedJeedomDevices(ctx)
+		})
+	}
 	go application.refreshOnline(ctx)
 	if application.mqtt != nil {
 		go application.publishMQTTSnapshots(ctx)
@@ -298,11 +315,7 @@ func (a *App) handleCatalogChanged(snapshot state.Snapshot) {
 		if err := a.jeedom.Save(context.Background()); err != nil {
 			a.log.Warn().Err(err).Msg("persist Jeedom cache after catalog change")
 		}
-		if a.jeedomPub != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), a.cfg.MQTTTimeout)
-			defer cancel()
-			a.publishJeedomDevices(ctx, devices, "publish Jeedom device after catalog change")
-		}
+		a.enqueueJeedomPublish(devices, "publish Jeedom device after catalog change")
 	}
 	a.metrics.SetSnapshot(snapshot)
 	a.enqueueMQTTUpdate(hamqtt.Update{Accounts: snapshot.Accounts, Zones: snapshot.Zones})
@@ -328,12 +341,54 @@ func (a *App) storedJeedomDevices() []jeedom.Device {
 	return a.jeedom.Devices()
 }
 
+func (a *App) enqueueJeedomPublish(devices []jeedom.Device, message string) {
+	if a == nil || a.jeedomQueue == nil {
+		return
+	}
+	batch := jeedomPublishBatch{
+		devices: append([]jeedom.Device(nil), devices...),
+		message: message,
+	}
+	a.jeedomQueueMu.Lock()
+	defer a.jeedomQueueMu.Unlock()
+	select {
+	case a.jeedomQueue <- batch:
+		return
+	default:
+	}
+	select {
+	case <-a.jeedomQueue:
+	default:
+	}
+	select {
+	case a.jeedomQueue <- batch:
+	default:
+	}
+}
+
+func (a *App) publishQueuedJeedomDevices(ctx context.Context) {
+	if a == nil || a.jeedomQueue == nil {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case batch := <-a.jeedomQueue:
+			a.publishJeedomDevices(ctx, batch.devices, batch.message)
+		}
+	}
+}
+
 func (a *App) publishJeedomDevices(ctx context.Context, devices []jeedom.Device, message string) {
 	if a == nil || a.jeedomPub == nil {
 		return
 	}
 	acknowledgedCleanup := false
 	for _, device := range devices {
+		if ctx.Err() != nil {
+			break
+		}
 		published, err := a.jeedomPub.PublishDeviceWithResult(ctx, device)
 		if err != nil {
 			a.log.Debug().Err(err).Str("device", device.DeviceSlug).Msg(message)
@@ -348,9 +403,17 @@ func (a *App) publishJeedomDevices(ctx context.Context, devices []jeedom.Device,
 		}
 	}
 	if acknowledgedCleanup {
-		if err := a.jeedom.Save(ctx); err != nil {
+		saveCtx := ctx
+		cancel := func() {}
+		if ctx.Err() != nil {
+			if a.cfg.MQTTTimeout > 0 {
+				saveCtx, cancel = context.WithTimeout(context.Background(), a.cfg.MQTTTimeout)
+			}
+		}
+		if err := a.jeedom.Save(saveCtx); err != nil {
 			a.log.Warn().Err(err).Msg("persist acknowledged Jeedom MQTT discovery cleanup")
 		}
+		cancel()
 	}
 }
 
