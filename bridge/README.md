@@ -36,7 +36,7 @@ go test -race ./...
 go tool govulncheck ./...
 ```
 
-The race detector requires a supported platform and C toolchain. Home Assistant cards use Node.js 24.21.0 and npm 12.1.0; see their [development guide](../ha-cards/README.md).
+The race detector requires a supported platform and C toolchain. Home Assistant cards use Node.js 24.21.0 and npm 12.2.0; see their [development guide](../ha-cards/README.md).
 
 CI is configured to run on pushed branches and pull requests. It checks the Go bridge with vet, normal and race-enabled tests, and the pinned `govulncheck`; checks the cards with regression tests, type-aware linting, TypeScript 7, and a Vite production build; and validates, smoke-tests, and scans the hardened amd64/arm64 container image. The release pipeline produces checksums, SBOMs, provenance and signed container images.
 

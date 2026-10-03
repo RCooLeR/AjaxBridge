@@ -15,7 +15,7 @@ AjaxBridge is an unofficial DIY open-source project for compatibility and integr
 
 ## Development
 
-Use Node.js 24.21.0 LTS and npm 12.1.0. The checked-in `.node-version` and `packageManager` fields record those versions.
+Use Node.js 24.21.0 LTS and npm 12.2.0. The checked-in `.node-version` and `packageManager` fields record those versions.
 
 ```bash
 npm ci
