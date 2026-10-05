@@ -28,10 +28,12 @@ export interface AjaxBridgeDetailedCardConfig {
   default_room?: string;
   account?: string;
   dahua_base?: string;
+  grid_power_alarm_entities?: readonly string[];
 }
 
 export interface AjaxBridgeChipsCardConfig {
   type: string;
   max_chips?: number;
   account?: string;
+  grid_power_alarm_entities?: readonly string[];
 }

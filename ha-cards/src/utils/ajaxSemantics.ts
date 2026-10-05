@@ -3,7 +3,7 @@ import type { GlowTone } from '../models/dashboard';
 const SIGNALS = new Set(['alarm', 'burglary', 'panic', 'duress', 'emergency', 'medical', 'hold_up', 'fire', 'smoke', 'co', 'gas', 'gas_or_co', 'water_leak', 'leak', 'flood', 'tamper', 'connectivity', 'battery', 'power', 'hardware', 'interference', 'accelerometer', 'fire_detector', 'configuration', 'firmware', 'supervision', 'button', 'arming', 'night_mode', 'temperature']);
 export const SECURITY_SIGNALS = new Set(['alarm', 'burglary', 'panic', 'duress', 'emergency', 'medical', 'hold_up', 'fire', 'smoke', 'co', 'gas', 'gas_or_co', 'water_leak', 'leak', 'flood', 'tamper', 'temperature']);
 const ALIASES: Record<string, string[]> = {
-  alarm_active: ['alarm_active', 'alarm', 'alarme', 'тривога'],
+  alarm_active: ['alarm_active', 'input_alarm', 'alarm', 'alarme', 'тривога'],
   tamper_active: ['tamper_active', 'tamper', 'sabotage', 'саботаж'],
   trouble_active: ['trouble_active', 'trouble', 'problem', 'несправність'],
   last_event_name: ['last_event_name', 'last_event', 'dernier_evenement'],
@@ -51,6 +51,7 @@ export function ajaxEntitySemantic(entry: { entity_id: string; unique_id?: strin
 }
 
 function canonicalSemantic(value: string): string {
+  if (value === 'input_alarm') return 'alarm_active';
   if (value === 'signal_power_failure') return 'signal_power';
   if (value === 'signal_temperature_alarm') return 'signal_temperature';
   return value;
