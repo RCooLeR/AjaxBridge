@@ -30,6 +30,7 @@ type Device struct {
 	Room             string    `json:"room"`
 	Kind             string    `json:"kind"`
 	Events           []string  `json:"events"`
+	Roles            []string  `json:"roles,omitempty"`
 	Description      string    `json:"description,omitempty"`
 	JeedomNames      []string  `json:"jeedom_names,omitempty"`
 	JeedomCommandIDs []string  `json:"jeedom_command_ids,omitempty"`

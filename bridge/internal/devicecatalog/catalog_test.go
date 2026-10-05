@@ -21,7 +21,8 @@ func TestLoadAndLookup(t *testing.T) {
     "name": "Kitchen transmitter",
     "room": "Kitchen",
     "kind": "ajax_transmitter",
-    "events": ["alarm", "tamper"]
+    "events": ["alarm", "tamper"],
+    "roles": ["grid_power_detector"]
   }
 ]`)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
@@ -39,6 +40,9 @@ func TestLoadAndLookup(t *testing.T) {
 	}
 	if device.Name != "Kitchen transmitter" || device.Room != "Kitchen" || device.Kind != "ajax_transmitter" {
 		t.Fatalf("unexpected device: %#v", device)
+	}
+	if len(device.Roles) != 1 || device.Roles[0] != "grid_power_detector" {
+		t.Fatalf("roles = %#v", device.Roles)
 	}
 
 	device, ok = catalog.Lookup("0001", "3", "other")

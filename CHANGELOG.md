@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Interpret a catalog-tagged grid-power Transmitter's `M_11_3F` event as mains unavailable and `M_11_40` as restored, while keeping outages informational in the Home Assistant cards.
+- Require the explicit `grid_power_detector` role so ordinary Transmitters such as gate contacts are never counted as mains monitors, and clean up their obsolete retained Home Assistant discovery entities during cache migration.
+
 ## 2.1.0 - 2026-09-25
 
 Upgrade guidance and history-migration details: [2.1.0 release notes](bridge/docs/releases/2.1.0.md).
