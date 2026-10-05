@@ -65,6 +65,66 @@ func TestDiscoveryPayloadUsesStableCommandIDAndDeviceIdentifier(t *testing.T) {
 	}
 }
 
+func TestPublishSyntheticInputAlarmAsSafetyBinarySensor(t *testing.T) {
+	mqtt := &recordingMQTT{}
+	publisher := NewPublisher(PublisherConfig{
+		StateTopicPrefix: "ajaxbridge/jeedom",
+		Discovery:        true,
+		DiscoveryPrefix:  "homeassistant",
+		DiscoveryNode:    "ajaxbridge",
+		RetainState:      true,
+		RetainDiscovery:  true,
+	}, mqtt)
+	device := Device{
+		Device:           "Physical input",
+		DeviceSlug:       "sia_a0f80d_zone_10",
+		JeedomDeviceType: "Transmitter",
+		Values:           map[string]any{"input_alarm": true},
+		RawCommands: map[string]Command{
+			"input_alarm": {
+				Device:      "Physical input",
+				DeviceSlug:  "sia_a0f80d_zone_10",
+				Name:        "Input alarm",
+				RawName:     "Input alarm",
+				Metric:      "input_alarm",
+				Component:   ComponentBinarySensor,
+				Type:        "info",
+				Subtype:     "binary",
+				DeviceClass: "safety",
+				Value:       true,
+				LastValueAt: time.Unix(100, 0),
+			},
+		},
+	}
+
+	if err := publisher.PublishDevice(t.Context(), device); err != nil {
+		t.Fatal(err)
+	}
+	topic := "homeassistant/binary_sensor/ajaxbridge/jeedom_sia_a0f80d_zone_10_input_alarm/config"
+	body := mqtt.discovery[topic]
+	if body == "" {
+		t.Fatalf("missing input alarm discovery at %s", topic)
+	}
+	var config DiscoveryConfig
+	if err := json.Unmarshal([]byte(body), &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Name != "Input Alarm" || config.UniqueID != "ajaxbridge_jeedom_sia_a0f80d_zone_10_input_alarm" ||
+		config.DeviceClass != "safety" || config.PayloadOn != payloadOn || config.PayloadOff != payloadOff {
+		t.Fatalf("input alarm discovery = %#v", config)
+	}
+	if config.ValueTemplate != "{{ 'None' if value_json.get('input_alarm') is none else ('ON' if value_json.get('input_alarm') else 'OFF') }}" {
+		t.Fatalf("input alarm value template = %q", config.ValueTemplate)
+	}
+	var state map[string]any
+	if err := json.Unmarshal([]byte(mqtt.state["ajaxbridge/jeedom/devices/sia_a0f80d_zone_10/state"]), &state); err != nil {
+		t.Fatal(err)
+	}
+	if state["input_alarm"] != true {
+		t.Fatalf("published raw input alarm state = %#v", state)
+	}
+}
+
 func TestPublishDeviceCleansNeverValuedMeasurements(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

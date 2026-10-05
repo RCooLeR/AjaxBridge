@@ -62,7 +62,7 @@ const adminHTML = `<!doctype html>
         <div class="d-flex justify-content-between align-items-center mb-3">
           <div>
             <h1 class="h5 mb-1">Device Catalog</h1>
-            <div class="text-body-secondary small">Edit names, rooms, kinds, roles, SIA zone metadata, and expected event signals.</div>
+            <div class="text-body-secondary small">Edit names, rooms, kinds, SIA zone metadata, and expected event signals.</div>
           </div>
           <div class="d-flex gap-2">
             <button class="btn btn-outline-primary btn-sm" onclick="addDeviceRow()">Add device</button>
@@ -73,7 +73,7 @@ const adminHTML = `<!doctype html>
           <table class="table table-sm table-hover align-middle" id="devicesTable">
             <thead>
               <tr>
-                <th>Account</th><th>Zone</th><th>Device</th><th>Name</th><th>Room</th><th>Kind</th><th>Events</th><th>Roles</th><th>Jeedom names</th><th>Jeedom command IDs</th><th></th>
+                <th>Account</th><th>Zone</th><th>Device</th><th>Name</th><th>Room</th><th>Kind</th><th>Events</th><th>Jeedom names</th><th>Jeedom command IDs</th><th></th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -246,7 +246,6 @@ const adminHTML = `<!doctype html>
         '<td><input class="form-control form-control-sm" data-field="room" value="' + esc(device.room) + '"></td>' +
         '<td><input class="form-control form-control-sm" data-field="kind" value="' + esc(device.kind) + '"></td>' +
         '<td><textarea class="form-control form-control-sm" data-field="events">' + esc(csv(device.events)) + '</textarea></td>' +
-        '<td><textarea class="form-control form-control-sm" data-field="roles">' + esc(csv(device.roles)) + '</textarea></td>' +
         '<td><textarea class="form-control form-control-sm" data-field="jeedom_names">' + esc(csv(device.jeedom_names)) + '</textarea></td>' +
         '<td><textarea class="form-control form-control-sm" data-field="jeedom_command_ids">' + esc(csv(device.jeedom_command_ids)) + '</textarea></td>' +
         '<td><button class="btn btn-outline-danger btn-sm" onclick="this.closest(\'tr\').remove()">x</button></td>';
@@ -254,7 +253,7 @@ const adminHTML = `<!doctype html>
     }
 
     function addDeviceRow() {
-      appendDeviceRow({account:'', zone:'', device:'', name:'', room:'', kind:'', events:[], roles:[], jeedom_names:[], jeedom_command_ids:[]});
+      appendDeviceRow({account:'', zone:'', device:'', name:'', room:'', kind:'', events:[], jeedom_names:[], jeedom_command_ids:[]});
     }
 
     function collectDevices() {
@@ -268,7 +267,6 @@ const adminHTML = `<!doctype html>
           room: value('room'),
           kind: value('kind'),
           events: splitCSV(value('events')),
-          roles: splitCSV(value('roles')),
           jeedom_names: splitCSV(value('jeedom_names')),
           jeedom_command_ids: splitCSV(value('jeedom_command_ids'))
         };
@@ -532,7 +530,6 @@ const adminHTML = `<!doctype html>
         room: '',
         kind: 'Hub',
         events: [],
-        roles: [],
         jeedom_names: [],
         jeedom_command_ids: []
       };

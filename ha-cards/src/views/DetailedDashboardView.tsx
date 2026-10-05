@@ -18,10 +18,11 @@ interface DetailedDashboardViewProps {
   hass?: HomeAssistant;
   account?: string;
   dahuaBase?: string;
+  gridPowerAlarmEntities?: readonly string[];
 }
 
-export function DetailedDashboardView({ mode = 'standalone', initialRoomId, hass, account, dahuaBase }: DetailedDashboardViewProps) {
-  const liveData = useDashboardData(hass, account, dahuaBase);
+export function DetailedDashboardView({ mode = 'standalone', initialRoomId, hass, account, dahuaBase, gridPowerAlarmEntities }: DetailedDashboardViewProps) {
+  const liveData = useDashboardData(hass, account, dahuaBase, gridPowerAlarmEntities);
   const data = hass ? liveData : dashboardData;
   const [selectedRoomId, setSelectedRoomId] = useState<string>('');
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);

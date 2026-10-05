@@ -18,7 +18,6 @@ func TestCatalogResolverLinksByCommandID(t *testing.T) {
 		Name:             "Живлення сервера",
 		Room:             "Котельна",
 		Kind:             "WallSwitch",
-		Roles:            []string{"grid_power_detector"},
 		JeedomCommandIDs: []string{"55", "56", "57"},
 	})
 
@@ -33,9 +32,6 @@ func TestCatalogResolverLinksByCommandID(t *testing.T) {
 	}
 	if identity.DeviceSlug != "sia_a0f80d_zone_8" {
 		t.Fatalf("DeviceSlug = %q", identity.DeviceSlug)
-	}
-	if len(identity.Roles) != 1 || identity.Roles[0] != "grid_power_detector" {
-		t.Fatalf("Roles = %#v", identity.Roles)
 	}
 }
 

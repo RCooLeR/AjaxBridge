@@ -97,14 +97,21 @@ func TestAdminHTMLIncludesExpandedJeedomMatching(t *testing.T) {
 		`(model.jeedom_actions || []).forEach(function(action)`,
 		`Control action`,
 		`model.devices = collectDevices()`,
-		`data-field="roles"`,
-		`roles: splitCSV(value('roles'))`,
 		`catalogDevice.jeedom_command_ids = mergedIDs`,
 		`return /^\d+$/.test`,
 		`Press Save catalog to persist`,
 	} {
 		if !strings.Contains(adminHTML, want) {
 			t.Errorf("admin HTML is missing %q", want)
+		}
+	}
+	for _, removed := range []string{
+		`data-field="roles"`,
+		`roles: splitCSV(value('roles'))`,
+		`<th>Roles</th>`,
+	} {
+		if strings.Contains(adminHTML, removed) {
+			t.Errorf("admin HTML still contains removed catalog role control %q", removed)
 		}
 	}
 }

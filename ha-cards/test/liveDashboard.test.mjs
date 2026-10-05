@@ -40,14 +40,21 @@ const { buildRegistryIndex, buildDashboardDataFromHomeAssistant, callDeviceActio
 function device(zone = '6', model = 'MotionProtect', name = 'Detector', extra = {}) {
   return { id: `ha-${zone}`, name, model, manufacturer: 'Ajax Systems', area_id: 'room', identifiers: [['mqtt', `ajaxbridge_A0F80D_zone_${zone}`]], ...extra };
 }
-function fixture(inputs, model = 'MotionProtect', name = 'Detector', devices = [device('6', model, name)]) {
+function fixture(
+  inputs,
+  model = 'MotionProtect',
+  name = 'Detector',
+  devices = [device('6', model, name)],
+  gridPowerAlarmEntities = [],
+  roomSmdIvsCounts = {},
+) {
   const states = {};
   const entities = inputs.map(([entity_id, value, attributes = {}, metadata = {}]) => {
     states[entity_id] = { entity_id, state: value, attributes, last_changed: '2026-09-24T10:00:00Z' };
     return { entity_id, device_id: devices[0].id, original_name: attributes.friendly_name, ...metadata };
   });
   const registry = { areas: [{area_id: 'room', name: 'Room'}], devices, entities };
-  const data = buildDashboardDataFromHomeAssistant(states, buildRegistryIndex(registry));
+  const data = buildDashboardDataFromHomeAssistant(states, buildRegistryIndex(registry), undefined, roomSmdIvsCounts, gridPowerAlarmEntities);
   return { data, states, registry, card: data.devices[0] };
 }
 const chip = (data, id) => data.systemState.chips.find((entry) => entry.id === id);
@@ -213,7 +220,28 @@ test('WallSwitch lighting role stays in full product power inventory; foreign na
   const {data} = fixture(inputs,'','',devices);
   assert.equal(data.devices.length,8);
   assert.equal(chip(data,'system-outlets').value,'8/8');
+  assert.equal(chip(data,'system-outlets').details.items.length,8);
+  assert.ok(chip(data,'system-outlets').details.summary.includes('first number'));
+  assert.ok(chip(data,'system-outlets').details.items.some((item)=>item.label==='Garage light'&&item.value==='On'));
+  assert.ok(chip(data,'system-lights').details.items.some((item)=>item.label==='Garage light'&&item.value==='On'));
   assert.equal(data.devices.find((item) => item.name === 'Garage light').type,'wall_switch');
+});
+
+test('summary chip details explain analytics totals and per-room counts', () => {
+  const {data}=fixture([['sensor.detector_battery','100',{device_class:'battery'}]], 'MotionProtect', 'Detector', undefined, [], {
+    room:{total:14,human:7,vehicle:3,animal:2,ivs:2},
+  });
+  const smd=chip(data,'system-smd');
+  assert.equal(smd.value,'12');
+  assert.deepEqual(
+    smd.details.items.slice(0,3).map((item)=>[item.label,item.value]),
+    [['People','7'],['Vehicles','3'],['Animals','2']],
+  );
+  assert.ok(smd.details.items.some((item)=>item.label==='Room: Room'&&item.value==='12'));
+  const ivs=chip(data,'system-ivs');
+  assert.equal(ivs.value,'2');
+  assert.ok(ivs.details.summary.includes('Tripwire'));
+  assert.deepEqual(ivs.details.items.map((item)=>[item.label,item.value]),[['Room','2']]);
 });
 
 test('unknown WallSwitch and intermediate/moving/unknown WaterStop disable both UI surfaces and dispatch', async () => {
@@ -221,11 +249,14 @@ test('unknown WallSwitch and intermediate/moving/unknown WaterStop disable both 
     ['WallSwitch',[['switch.pump','unknown']]],
     ...['INTERMEDIATE','OPENING','CLOSING','MOVING','unknown','unavailable'].map((value) => ['WaterStop',[['switch.valve','on'],['sensor.valve_position',value]]]),
   ]) {
-    const {card,states} = fixture(inputs,model);
+    const {card,states,data} = fixture(inputs,model);
     const action = card.actions[0];
     assert.equal(action.disabled,true,`${model} ${inputs.at(-1)[1]}`);
     assert.equal(action.service,'');
     assert.equal(card.attention,true);
+    if (model === 'WallSwitch') {
+      assert.ok(chip(data,'system-outlets').details.items.some((item)=>item.label==='Detector'&&item.value==='Unknown'));
+    }
     assert.equal(chip(fixture(inputs,model).data,'system-mode').value,'Monitoring');
     let calls=0;
     const hass={states,callService:async()=>{calls++;}};
@@ -303,46 +334,85 @@ test('SIA power-failure is an operational fault, while clear is nominal and temp
   assert.equal(data.rooms[0].safety.smokeHigh,1);
 });
 
-test('dedicated grid Transmitter outage is informational rather than a critical alert', () => {
+test('HA-mapped Transmitter input alarm becomes an informational grid outage', () => {
   const {card,data}=fixture([
-    ['binary_sensor.grid_power','off',{device_class:'power',friendly_name:'Grid Power',roles:['grid_power_detector']},{unique_id:'ajaxbridge_jeedom_sia_a0f80d_zone_6_grid_power'}],
-    ['binary_sensor.power_failure','on',{device_class:'problem'},{unique_id:'ajaxbridge_zone_a0f80d_6_signal_power_failure'}],
-    ['binary_sensor.alarm_active','on',{}, {unique_id:'ajaxbridge_zone_a0f80d_6_alarm_active'}],
-    ['binary_sensor.burglary','on',{}, {unique_id:'ajaxbridge_zone_a0f80d_6_signal_burglary'}],
+    ['binary_sensor.grid_input_alarm','on',{device_class:'safety',friendly_name:'Input alarm',metric:'input_alarm'},{unique_id:'ajaxbridge_jeedom_sia_a0f80d_zone_6_input_alarm'}],
     ['sensor.last_event_name','Input alarm',{}, {unique_id:'ajaxbridge_zone_a0f80d_6_last_event_name'}],
     ['sensor.last_event_at','2026-09-24T10:00:00Z',{}, {unique_id:'ajaxbridge_zone_a0f80d_6_last_event_at'}],
-  ],'Transmitter','Grid power detector');
+  ],'Transmitter','Grid power detector',undefined,['binary_sensor.grid_input_alarm']);
   assert.equal(card.status,'Grid power off');
   assert.equal(card.tone,'amber');
   assert.equal(card.attention,false);
   assert.ok(card.metrics?.some((metric)=>metric.label==='Grid power'&&metric.value==='Off'));
-  assert.ok(!card.metrics?.some((metric)=>metric.label==='Power alert'||metric.label==='Burglary alert'||metric.label==='Alarm signal'));
+  assert.ok(!card.metrics?.some((metric)=>metric.label==='Safety'||metric.label==='Alarm signal'));
   assert.equal(chip(data,'system-mode').value,'Monitoring');
   assert.equal(chip(data,'system-alerts'),undefined);
   assert.equal(chip(data,'system-grid-power').value,'1 outage');
   assert.equal(chip(data,'system-grid-power').tone,'amber');
+  assert.match(chip(data,'system-grid-power').details.summary,/informational/i);
+  assert.match(chip(data,'system-grid-power').details.summary,/not a security alarm/i);
+  assert.deepEqual(
+    chip(data,'system-grid-power').details.items.map((item)=>[item.label,item.value,item.tone]),
+    [['Grid power detector','Outage','amber']],
+  );
   assert.deepEqual(data.rooms[0].gridPower,{known:1,online:0,outage:1});
   assert.equal(data.events[0].type,'power_loss');
   assert.equal(data.events[0].tone,'amber');
   assert.doesNotMatch(data.events[0].description,/normal state/i);
 });
 
-test('ordinary Transmitter power alarm remains an alert and never becomes grid status', () => {
+test('unmapped Transmitter input alarm remains a critical safety alert', () => {
   const {card,data}=fixture([
-    ['binary_sensor.stale_grid_power','on',{device_class:'power',friendly_name:'Grid Power'},{unique_id:'ajaxbridge_jeedom_sia_a0f80d_zone_6_grid_power'}],
-    ['binary_sensor.power_failure','on',{device_class:'problem'},{unique_id:'ajaxbridge_zone_a0f80d_6_signal_power_failure'}],
+    ['binary_sensor.input_alarm','on',{device_class:'safety',friendly_name:'Input alarm',metric:'input_alarm'},{unique_id:'ajaxbridge_jeedom_sia_a0f80d_zone_6_input_alarm'}],
   ],'Transmitter','Gate contact');
   assert.notEqual(card.status,'Grid power off');
   assert.equal(card.attention,true);
+  assert.equal(card.tone,'red');
+  assert.equal(chip(data,'system-mode').value,'Alarm');
+  assert.ok(chip(data,'system-mode').details.items.some((item)=>item.label==='Gate contact'&&item.value===card.status));
+  assert.ok(chip(data,'system-alerts').details.items.some((item)=>item.label==='Gate contact'&&item.tone==='red'));
   assert.equal(chip(data,'system-grid-power').value,'Unknown');
+  assert.deepEqual(
+    chip(data,'system-grid-power').details.items.map((item)=>[item.label,item.value]),
+    [['Configured grid inputs','None available']],
+  );
   assert.equal(data.rooms[0].gridPower,undefined);
 });
 
-test('dedicated grid Transmitter reports restored mains as one known source', () => {
+test('HA-mapped Transmitter clear state reports restored mains as one known source', () => {
   const {card,data}=fixture([
-    ['binary_sensor.grid_power','on',{device_class:'power',friendly_name:'Grid Power',roles:['grid_power_detector']},{unique_id:'ajaxbridge_jeedom_sia_a0f80d_zone_6_grid_power'}],
-  ],'Transmitter','Grid power detector');
+    ['binary_sensor.grid_input_alarm','off',{device_class:'safety',friendly_name:'Input alarm',metric:'input_alarm'},{unique_id:'ajaxbridge_jeedom_sia_a0f80d_zone_6_input_alarm'}],
+  ],'Transmitter','Grid power detector',undefined,['binary_sensor.grid_input_alarm']);
   assert.equal(card.attention,false);
+  assert.ok(card.metrics?.some((metric)=>metric.label==='Grid power'&&metric.value==='Mains'));
+  assert.ok(!card.metrics?.some((metric)=>metric.label==='Safety'));
   assert.equal(chip(data,'system-grid-power').value,'1/1 OK');
   assert.deepEqual(data.rooms[0].gridPower,{known:1,online:1,outage:0});
+});
+
+test('HA-mapped unknown and unavailable input states remain explicitly unknown', () => {
+  for (const state of ['unknown','unavailable']) {
+    const {card,data}=fixture([
+      ['binary_sensor.grid_input_alarm',state,{device_class:'safety',friendly_name:'Input alarm',metric:'input_alarm'},{unique_id:'ajaxbridge_jeedom_sia_a0f80d_zone_6_input_alarm'}],
+    ],'Transmitter','Grid power detector',undefined,['binary_sensor.grid_input_alarm']);
+    assert.equal(card.status,'Grid power unknown');
+    assert.equal(card.attention,false);
+    assert.ok(card.metrics?.some((metric)=>metric.label==='Grid power'&&metric.value==='Unknown'&&metric.tone==='slate'));
+    assert.ok(!card.metrics?.some((metric)=>metric.label==='Safety'));
+    assert.equal(chip(data,'system-grid-power').value,'Unknown');
+    assert.equal(chip(data,'system-grid-power').tone,'slate');
+    assert.equal(data.rooms[0].gridPower,undefined);
+  }
+});
+
+test('grid mapping suppresses exactly its configured entity and leaves other alarms critical', () => {
+  const {card,data}=fixture([
+    ['binary_sensor.grid_input_alarm','on',{device_class:'safety',friendly_name:'Input alarm',metric:'input_alarm'},{unique_id:'ajaxbridge_jeedom_sia_a0f80d_zone_6_input_alarm'}],
+    ['binary_sensor.other_alarm','on',{device_class:'safety',friendly_name:'Other alarm',metric:'alarm_active'},{unique_id:'ajaxbridge_zone_a0f80d_6_alarm_active'}],
+  ],'Transmitter','Grid power detector',undefined,['binary_sensor.grid_input_alarm']);
+  assert.equal(card.attention,true);
+  assert.equal(card.tone,'red');
+  assert.equal(chip(data,'system-mode').value,'Alarm');
+  assert.equal(chip(data,'system-grid-power').value,'1 outage');
+  assert.ok(card.metrics?.some((metric)=>metric.label==='Safety'));
 });

@@ -1,6 +1,7 @@
 package devicecatalog
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -21,8 +22,7 @@ func TestLoadAndLookup(t *testing.T) {
     "name": "Kitchen transmitter",
     "room": "Kitchen",
     "kind": "ajax_transmitter",
-    "events": ["alarm", "tamper"],
-    "roles": ["grid_power_detector"]
+    "events": ["alarm", "tamper"]
   }
 ]`)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
@@ -41,16 +41,35 @@ func TestLoadAndLookup(t *testing.T) {
 	if device.Name != "Kitchen transmitter" || device.Room != "Kitchen" || device.Kind != "ajax_transmitter" {
 		t.Fatalf("unexpected device: %#v", device)
 	}
-	if len(device.Roles) != 1 || device.Roles[0] != "grid_power_detector" {
-		t.Fatalf("roles = %#v", device.Roles)
-	}
-
 	device, ok = catalog.Lookup("0001", "3", "other")
 	if !ok {
 		t.Fatal("expected zone fallback match")
 	}
 	if device.Name != "Kitchen transmitter" {
 		t.Fatalf("fallback device = %#v", device)
+	}
+}
+
+func TestReplaceDropsLegacyRolesField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "devices.json")
+	if err := os.WriteFile(path, []byte(`[{"account":"0001","zone":"3","name":"Power input","room":"Utility","kind":"Transmitter","events":[],"roles":["grid_power_detector"]}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	catalog, err := Load(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalog.Replace(context.Background(), catalog.Devices()); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte(`"roles"`)) {
+		t.Fatalf("legacy roles field survived catalog save: %s", data)
 	}
 }
 

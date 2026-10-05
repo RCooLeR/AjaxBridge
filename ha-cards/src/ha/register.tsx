@@ -94,6 +94,7 @@ class AjaxBridgeDetailedCard extends ReactHomeAssistantElement<AjaxBridgeDetaile
           hass={this.hassValue}
           account={config.account}
           dahuaBase={config.dahua_base}
+          gridPowerAlarmEntities={config.grid_power_alarm_entities}
         />
       </div>
     );
@@ -134,7 +135,12 @@ class AjaxBridgeChipsCard extends ReactHomeAssistantElement<AjaxBridgeChipsCardC
 
     return (
       <div className="ajaxbridge-ha-card ajaxbridge-ha-card--chips">
-        <ChipsOverviewView maxChips={config.max_chips} hass={this.hassValue} account={config.account} />
+        <ChipsOverviewView
+          maxChips={config.max_chips}
+          hass={this.hassValue}
+          account={config.account}
+          gridPowerAlarmEntities={config.grid_power_alarm_entities}
+        />
       </div>
     );
   }

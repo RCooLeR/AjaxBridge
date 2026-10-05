@@ -28,7 +28,7 @@ export function TopSystemBar({ systemState, maxChips, compact = false }: TopSyst
 
       <div className="top-system-bar__chips">
         {chips.map((chip) => (
-          <SystemChip key={chip.id} chip={chip} />
+          <SystemChip key={chip.id} chip={chip} compact={compact} />
         ))}
       </div>
     </header>

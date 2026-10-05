@@ -158,7 +158,6 @@ func identityForCatalogDevice(device devicecatalog.Device) DeviceIdentity {
 			HAManufacturer: "Ajax Systems",
 			HAModel:        firstNonEmpty(kind, "Ajax account"),
 			SuggestedArea:  room,
-			Roles:          append([]string(nil), device.Roles...),
 			LinkedSource:   "sia",
 			LinkedAccount:  account,
 		}
@@ -171,7 +170,6 @@ func identityForCatalogDevice(device devicecatalog.Device) DeviceIdentity {
 		HAManufacturer: "Ajax Systems",
 		HAModel:        firstNonEmpty(kind, "Ajax device"),
 		SuggestedArea:  room,
-		Roles:          append([]string(nil), device.Roles...),
 		LinkedSource:   "sia",
 		LinkedAccount:  device.Account,
 		LinkedZone:     device.Zone,

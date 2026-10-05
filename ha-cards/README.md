@@ -88,6 +88,8 @@ panel: true
 cards:
   - type: custom:ajaxbridge-detailed-card
     dahua_base: https://ha.example.test/dahua-bridge
+    grid_power_alarm_entities:
+      - binary_sensor.detektor_elektrozhivlennia_merezhi_input_alarm
 ```
 
 Use `dahua_base` when browser-side DahuaBridge calls need to go through a Home Assistant proxy path instead of the bridge URL published on camera attributes.
@@ -97,7 +99,11 @@ Compact chips card:
 ```yaml
 type: custom:ajaxbridge-chips-card
 max_chips: 7
+grid_power_alarm_entities:
+  - binary_sensor.detektor_elektrozhivlennia_merezhi_input_alarm
 ```
+
+`grid_power_alarm_entities` is an explicit Home Assistant-side mapping. For each listed Transmitter input, `on` means the physical input is in alarm (utility power is unavailable) and `off` means the input is restored (utility power is available). Unlisted `input_alarm` entities keep their normal safety-alarm meaning; AjaxBridge does not decide which physical input monitors the mains.
 
 Ready-to-paste examples live in [`examples/`](./examples/):
 
@@ -111,6 +117,8 @@ Reference notes for DahuaBridge camera discovery, live playback, and SMD/IVS roo
 - Rooms come from Home Assistant areas.
 - Room hero backgrounds prefer area pictures and fall back to linked image or camera entities.
 - AjaxBridge devices come from the Home Assistant device/entity registries plus MQTT entities published by AjaxBridge.
+- Grid-power status is derived only from the `input_alarm` entity ids explicitly listed in `grid_power_alarm_entities`.
+- Summary chips are interactive: select one to see the sources behind its total, including the meaning of `x/y` device counts. Mapped grid outages are shown as informational status and are excluded from Alerts.
 - Dahua and Roller devices are grouped by Home Assistant device and rendered inside their assigned room.
 - Dahua camera event rows are limited to SMD/IVS detection state and camera online/offline state. Unavailable SMD/IVS sensors, stream, codec, ONVIF/H.264, profile, capability, and other diagnostic entities are ignored for camera events and alerts.
 - Dahua SMD/IVS 24 hour counters are shown only for rooms that contain a Dahua camera device. They are loaded from the DahuaBridge NVR `/events/summary` endpoint and can use `dahua_base` for browser-reachable proxy URLs.

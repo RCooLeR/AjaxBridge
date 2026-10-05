@@ -13,7 +13,7 @@ import (
 func TestCommandsListsSyntheticObservationsBeforeAndAfterCacheRestore(t *testing.T) {
 	catalog := testCatalog(t,
 		devicecatalog.Device{Account: "A0F80D", Zone: "1", Name: "Gate", Kind: "Transmitter", JeedomCommandIDs: []string{"100"}},
-		devicecatalog.Device{Account: "A0F80D", Zone: "2", Name: "Power", Kind: "Transmitter", Roles: []string{gridPowerDetectorRole}, JeedomCommandIDs: []string{"200"}},
+		devicecatalog.Device{Account: "A0F80D", Zone: "2", Name: "Power", Kind: "Transmitter", JeedomCommandIDs: []string{"200"}},
 		devicecatalog.Device{Account: "A0F80D", Zone: "3", Name: "Wicket", Kind: "Transmitter", JeedomCommandIDs: []string{"300"}},
 	)
 	resolver := NewCatalogResolver(catalog, CatalogResolverConfig{})
@@ -31,14 +31,14 @@ func TestCommandsListsSyntheticObservationsBeforeAndAfterCacheRestore(t *testing
 		t.Helper()
 		indexBefore := maps.Clone(store.commands)
 		commands := store.Commands()
-		if len(commands) != 4 {
-			t.Fatalf("command listing has %d entries, want 3 physical and 1 explicitly configured synthetic: %#v", len(commands), commands)
+		if len(commands) != 6 {
+			t.Fatalf("command listing has %d entries, want 3 physical and 3 synthetic input alarms: %#v", len(commands), commands)
 		}
 		physical := make(map[string]string)
 		synthetic := make(map[string]Command)
 		for _, command := range commands {
 			if command.CommandID == "" {
-				if command.Metric != "grid_power" || command.Value != true || !command.LastValueAt.Equal(at) {
+				if command.Metric != "input_alarm" || command.Value != false || !command.LastValueAt.Equal(at) {
 					t.Fatalf("synthetic observation changed: %#v", command)
 				}
 				synthetic[command.DeviceSlug] = command
@@ -49,20 +49,21 @@ func TestCommandsListsSyntheticObservationsBeforeAndAfterCacheRestore(t *testing
 				physical[command.CommandID] = command.DeviceSlug
 			}
 		}
-		if _, ok := synthetic["sia_a0f80d_zone_2"]; !ok {
-			t.Errorf("synthetic grid_power is missing for explicitly configured detector: %#v", synthetic)
-		}
-		for _, slug := range []string{"sia_a0f80d_zone_1", "sia_a0f80d_zone_3"} {
-			if _, ok := synthetic[slug]; ok {
-				t.Errorf("ordinary Transmitter %s exposed synthetic grid_power", slug)
+		for _, slug := range []string{"sia_a0f80d_zone_1", "sia_a0f80d_zone_2", "sia_a0f80d_zone_3"} {
+			if _, ok := synthetic[slug]; !ok {
+				t.Errorf("ordinary Transmitter %s is missing synthetic input_alarm: %#v", slug, synthetic)
 			}
 		}
-		if !maps.Equal(physical, map[string]string{
+		expectedPhysical := map[string]string{
 			"100": "sia_a0f80d_zone_1",
 			"200": "sia_a0f80d_zone_2",
 			"300": "sia_a0f80d_zone_3",
-		}) {
+		}
+		if !maps.Equal(physical, expectedPhysical) {
 			t.Fatalf("physical command ownership changed: %#v", physical)
+		}
+		if !maps.Equal(indexBefore, expectedPhysical) {
+			t.Fatalf("command lookup index includes synthetic observations: %#v", indexBefore)
 		}
 		if !maps.Equal(indexBefore, store.commands) {
 			t.Fatal("listing modified the command lookup index")
@@ -83,6 +84,7 @@ func TestCommandsListsSyntheticObservationsBeforeAndAfterCacheRestore(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	restored.ReconcileResolver(resolver)
 	check(t, restored)
 }
 
@@ -92,13 +94,13 @@ func TestCommandsKeepsIndexedPhysicalOwnerWhenIncludingSyntheticObservations(t *
 		store.devices[slug] = &Device{
 			DeviceSlug: slug,
 			RawCommands: map[string]Command{
-				"55":         {CommandID: "55", DeviceSlug: slug, Metric: "event_code", Value: "M_11_40"},
-				"grid_power": {DeviceSlug: slug, Metric: "grid_power", Value: true},
+				"55":          {CommandID: "55", DeviceSlug: slug, Metric: "event_code", Value: "M_11_40"},
+				"input_alarm": {DeviceSlug: slug, Metric: "input_alarm", Value: false},
 			},
 		}
 	}
 	store.commands["55"] = "current"
-	store.commands["grid_power"] = "old"
+	store.commands["input_alarm"] = "old"
 	commands := store.Commands()
 	if len(commands) != 3 {
 		t.Fatalf("listing = %#v, want one physical owner and two synthetic observations", commands)

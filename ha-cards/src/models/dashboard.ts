@@ -34,6 +34,20 @@ export interface DashboardChip {
   icon: IconRef;
   tone: GlowTone;
   active: boolean;
+  details?: DashboardChipDetails;
+}
+
+export interface DashboardChipDetails {
+  title: string;
+  summary: string;
+  items: DashboardChipDetailItem[];
+}
+
+export interface DashboardChipDetailItem {
+  id: string;
+  label: string;
+  value?: string;
+  tone?: GlowTone;
 }
 
 export interface DashboardMetric {

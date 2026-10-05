@@ -2,8 +2,10 @@
 
 ## Unreleased
 
-- Interpret a catalog-tagged grid-power Transmitter's `M_11_3F` event as mains unavailable and `M_11_40` as restored, while keeping outages informational in the Home Assistant cards.
-- Require the explicit `grid_power_detector` role so ordinary Transmitters such as gate contacts are never counted as mains monitors, and clean up their obsolete retained Home Assistant discovery entities during cache migration.
+- Publish a Transmitter's physical-input `M_11_3F` and `M_11_40` events as a generic `input_alarm` binary state, while cleaning up obsolete derived `grid_power` discovery entities during cache migration.
+- Let Home Assistant card configuration decide which `input_alarm` entity represents utility-power availability; other Transmitters retain normal alarm semantics.
+- Keep mapped utility outages informational and outside the Alerts total, and make dashboard summary chips open a per-device or per-category breakdown.
+- Update the Home Assistant card toolchain to `@vitejs/plugin-react` 6.1.2 and Oxlint 1.87.0, including current compatible lockfile patches.
 
 ## 2.1.0 - 2026-09-25
 

@@ -1,7 +1,7 @@
 import devicesData from './devices.json';
 import eventsData from './events.json';
 import roomsData from './rooms.json';
-import type { DashboardData, Device, EventItem, Room, RoomSafety, RoomSmdIvsCounts, RoomSummary, SystemState } from '../models/dashboard';
+import type { DashboardChipDetailItem, DashboardData, Device, EventItem, Room, RoomSafety, RoomSmdIvsCounts, RoomSummary, SystemState } from '../models/dashboard';
 
 export const dashboardData: DashboardData = {
   systemState: buildStaticSystemState(devicesData as Device[], eventsData as EventItem[], roomsData as Room[]),
@@ -22,11 +22,24 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
   }, emptySmdIvsCounts());
   const fallbackSmdCount = events.filter((event) => ['human_detected', 'vehicle_detected'].includes(event.type)).length;
   const fallbackIvsCount = events.filter((event) => ['tripwire_detected', 'intrusion_detected'].includes(event.type)).length;
+  const useFallbackSmd = smdIvsTotals.human + smdIvsTotals.vehicle + smdIvsTotals.animal === 0;
+  const shownHumanCount = useFallbackSmd ? events.filter((event) => event.type === 'human_detected').length : smdIvsTotals.human;
+  const shownVehicleCount = useFallbackSmd ? events.filter((event) => event.type === 'vehicle_detected').length : smdIvsTotals.vehicle;
+  const shownAnimalCount = useFallbackSmd ? 0 : smdIvsTotals.animal;
+  const shownIvsCount = smdIvsTotals.ivs || fallbackIvsCount;
   const outlets = devices.filter(isOutletOrWallSwitchDevice);
   const lights = devices.filter(isLightSwitchDevice);
   const outletOnCount = outlets.filter(deviceLooksOn).length;
   const lightOnCount = lights.filter(deviceLooksOn).length;
   const alerts = devices.filter((device) => device.attention).length;
+  const staticSwitchItems = (items: Device[]): DashboardChipDetailItem[] => items.length > 0
+    ? items.map((device) => ({
+      id: `device:${device.id}`,
+      label: device.name,
+      value: deviceLooksOn(device) ? 'On' : 'Off',
+      tone: deviceLooksOn(device) ? 'green' : 'slate',
+    }))
+    : [{ id: 'none-discovered', label: 'Discovered devices', value: 'None', tone: 'slate' }];
   const chips = [
     {
       id: 'system-mode',
@@ -35,6 +48,24 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
       icon: { category: 'system-states', key: 'armed' },
       tone: 'green',
       active: true,
+      details: {
+        title: 'Security mode',
+        summary: 'Current Ajax security arming state. Device warnings are listed separately under Alerts.',
+        items: [{ id: 'security-state', label: 'Current state', value: 'Armed', tone: 'green' }],
+      },
+    },
+    {
+      id: 'system-grid-power',
+      label: 'Grid power',
+      value: 'Unknown',
+      icon: { category: 'system-states', key: 'grid_power' },
+      tone: 'slate',
+      active: false,
+      details: {
+        title: 'Grid power',
+        summary: 'Informational mains status from the raw input alarms explicitly mapped in Home Assistant. It is not a security alarm.',
+        items: [{ id: 'grid-power-unconfigured', label: 'Configured grid inputs', value: 'None available', tone: 'slate' }],
+      },
     },
     {
       id: 'system-smd',
@@ -43,14 +74,28 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
       icon: { category: 'events', key: 'human_detected' },
       tone: 'violet',
       active: smdIvsTotals.total > 0 || fallbackSmdCount > 0,
+      details: {
+        title: 'Smart Motion Detection',
+        summary: 'The total is people + vehicles + animals reported by SMD analytics.',
+        items: [
+          { id: 'smd-human', label: 'People', value: String(shownHumanCount), tone: shownHumanCount > 0 ? 'violet' : 'slate' },
+          { id: 'smd-vehicle', label: 'Vehicles', value: String(shownVehicleCount), tone: shownVehicleCount > 0 ? 'violet' : 'slate' },
+          { id: 'smd-animal', label: 'Animals', value: String(shownAnimalCount), tone: shownAnimalCount > 0 ? 'violet' : 'slate' },
+        ],
+      },
     },
     {
       id: 'system-ivs',
       label: 'IVS today',
-      value: String(smdIvsTotals.ivs || fallbackIvsCount),
+      value: String(shownIvsCount),
       icon: { category: 'events', key: 'tripwire_detected' },
       tone: 'amber',
       active: smdIvsTotals.ivs > 0 || fallbackIvsCount > 0,
+      details: {
+        title: 'IVS events',
+        summary: 'Tripwire and intrusion events reported by camera IVS analytics.',
+        items: [{ id: 'ivs-total', label: 'Tripwire / intrusion events', value: String(shownIvsCount), tone: shownIvsCount > 0 ? 'amber' : 'slate' }],
+      },
     },
     {
       id: 'system-outlets',
@@ -59,6 +104,11 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
       icon: { category: 'devices', key: 'smart_plug' },
       tone: outletOnCount > 0 ? 'green' : 'slate',
       active: outlets.length > 0 && outletOnCount > 0,
+      details: {
+        title: 'Outlets',
+        summary: 'The first number is outlets currently on; the second is every Ajax Socket or WallSwitch counted by this card.',
+        items: staticSwitchItems(outlets),
+      },
     },
     {
       id: 'system-lights',
@@ -67,6 +117,11 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
       icon: { category: 'devices', key: 'light_switch' },
       tone: lightOnCount > 0 ? 'green' : 'slate',
       active: lights.length > 0 && lightOnCount > 0,
+      details: {
+        title: 'Light switches',
+        summary: 'The first number is light switches currently on; the second is every light switch counted by this card.',
+        items: staticSwitchItems(lights),
+      },
     },
   ] as SystemState['chips'];
 
@@ -78,6 +133,13 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
       icon: { category: 'misc', key: 'alert' },
       tone: 'amber',
       active: true,
+      details: {
+        title: 'Devices needing attention',
+        summary: 'Current device faults, security alarms, offline devices, or unknown control states. Informational grid outages are excluded.',
+        items: devices
+          .filter((device) => device.attention)
+          .map((device) => ({ id: `device:${device.id}`, label: device.name, value: device.status, tone: device.tone })),
+      },
     });
   }
 

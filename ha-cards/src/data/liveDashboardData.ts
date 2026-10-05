@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useMemo, useState } from 'react';
 import type {
   DashboardChip,
+  DashboardChipDetailItem,
   DashboardData,
   DashboardMetric,
   Device,
@@ -123,7 +124,6 @@ interface ResolvedDevice extends Device {
   securityAlarm?: boolean;
   activeSafety?: { smoke: boolean; co: boolean };
   metrics?: DashboardMetric[];
-  roles: string[];
   gridPowerState: boolean | null;
 }
 
@@ -159,7 +159,7 @@ interface AjaxDeviceMetricContext {
 interface DeviceMetricOptions {
   calculateApparentPower?: boolean;
   deviceType?: string;
-  suppressedAjaxSignals?: ReadonlySet<string>;
+  excludedEntityIds?: ReadonlySet<string>;
 }
 
 interface DeviceActionContext {
@@ -184,6 +184,7 @@ const EMPTY_REGISTRIES: RegistrySnapshot = {
   entities: [],
 };
 const EMPTY_ROOM_SMD_IVS_COUNTS: RoomSmdIvsCountsByRoom = {};
+const EMPTY_GRID_POWER_ALARM_ENTITIES: readonly string[] = [];
 const loggedDahuaDebug = new Set<string>();
 const ISSUE_SIGNALS = new Set([
   'alarm',
@@ -218,7 +219,12 @@ const ISSUE_SIGNALS = new Set([
   'tamper_bypass',
 ]);
 
-export function useDashboardData(hass?: HomeAssistant, account?: string, dahuaBase?: string): DashboardData {
+export function useDashboardData(
+  hass?: HomeAssistant,
+  account?: string,
+  dahuaBase?: string,
+  gridPowerAlarmEntities: readonly string[] = EMPTY_GRID_POWER_ALARM_ENTITIES,
+): DashboardData {
   const [registries, setRegistries] = useState<RegistrySnapshot | null>(null);
   const [smdIvsSnapshot, setSmdIvsSnapshot] = useState<{
     signature: string;
@@ -330,8 +336,14 @@ export function useDashboardData(hass?: HomeAssistant, account?: string, dahuaBa
       return fallbackDashboardData;
     }
 
-    return buildDashboardDataFromHomeAssistant(hass.states, registryIndex, account, roomSmdIvsCounts);
-  }, [account, hass, registryIndex, roomSmdIvsCounts]);
+    return buildDashboardDataFromHomeAssistant(
+      hass.states,
+      registryIndex,
+      account,
+      roomSmdIvsCounts,
+      gridPowerAlarmEntities,
+    );
+  }, [account, gridPowerAlarmEntities, hass, registryIndex, roomSmdIvsCounts]);
 
   return dashboardData;
 }
@@ -371,6 +383,7 @@ export function buildDashboardDataFromHomeAssistant(
   registryIndex: RegistryIndex,
   accountFilter?: string,
   roomSmdIvsCounts: RoomSmdIvsCountsByRoom = {},
+  gridPowerAlarmEntities: readonly string[] = [],
 ): DashboardData {
   const { areas, areaById, deviceById, devices, entities, entitiesByDeviceId, entitiesByAreaId, resolvedAreaByDeviceId } =
     registryIndex;
@@ -380,6 +393,7 @@ export function buildDashboardDataFromHomeAssistant(
     resolvedAreaByDeviceId,
     states,
     accountFilter,
+    new Set(gridPowerAlarmEntities.map((entityId) => entityId.trim()).filter(Boolean)),
   );
   const ajaxDeviceIds = new Set(ajaxDevices.map((device) => device.id));
   const dahuaDevices = buildDahuaDevices(
@@ -418,6 +432,7 @@ function buildAjaxDevices(
   resolvedAreaByDeviceId: Map<string, string>,
   states: Record<string, HomeAssistantState>,
   accountFilter?: string,
+  gridPowerAlarmEntities: ReadonlySet<string> = new Set(),
 ): ResolvedDevice[] {
   const output: ResolvedDevice[] = [];
   const groups = new Map<string, { device: HomeAssistantDeviceEntry; entries: HomeAssistantEntityEntry[]; roomId?: string }>();
@@ -447,6 +462,10 @@ function buildAjaxDevices(
     }
 
     const linkedEntities = group.entries;
+    const gridPowerAlarmEntry = linkedEntities.find((entry) => gridPowerAlarmEntities.has(entry.entity_id));
+    const operationalEntities = gridPowerAlarmEntry
+      ? linkedEntities.filter((entry) => entry.entity_id !== gridPowerAlarmEntry.entity_id)
+      : linkedEntities;
     const actionEntries = linkedEntities.filter((entry) => isActionableEntity(entry));
     const accountDevice = isAjaxAccountDevice(deviceEntry);
     if (accountDevice && actionEntries.length === 0) {
@@ -462,17 +481,17 @@ function buildAjaxDevices(
     const lastEventAt = toUnix(eventTimestamp) > 0 ? eventTimestamp : '';
     const lastSignal = firstEntityState(linkedEntities, states, '_last_signal')?.state ?? 'idle';
     const alarmSignal = firstEntityState(linkedEntities, states, '_alarm_signal')?.state ?? '';
-    const activeSemantic = (semantic: string) => linkedEntities.some((entry) => ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes) === semantic && isOn(states[entry.entity_id]));
+    const activeSemantic = (semantic: string) => operationalEntities.some((entry) => ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes) === semantic && isOn(states[entry.entity_id]));
     const alarmActive = activeSemantic('alarm_active');
     const tamperActive = activeSemantic('tamper_active');
     const troubleActive = activeSemantic('trouble_active');
-    const activeSignals = linkedEntities
+    const activeSignals = operationalEntities
       .map((entry) => ({ entry, semantic: ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes) }))
       .filter(({ semantic }) => semantic?.startsWith('signal_'))
       .filter(({ entry }) => isOn(states[entry.entity_id]))
       .map(({ semantic }) => semantic?.slice('signal_'.length) ?? null)
       .filter((signal): signal is string => signal !== null);
-    const health = ajaxDeviceHealth(linkedEntities.map((entry) => ({
+    const health = ajaxDeviceHealth(operationalEntities.map((entry) => ({
       semantic: ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes),
       domain: entityDomain(entry.entity_id),
       value: states[entry.entity_id]?.state ?? 'unknown',
@@ -487,36 +506,35 @@ function buildAjaxDevices(
       model,
       entityIds: linkedEntities.map((entry) => entry.entity_id),
     });
-    const roles = ajaxDeviceRoles(linkedEntities, states);
-    // A dedicated Transmitter wired to the utility input reports its contact
-    // as an Ajax power alarm. That is the observed mains state, not a security
-    // incident and not a device-health fault.
-    const gridPowerDetector = isGridPowerDetector({ type, name: sourceLabel, model, roles });
-    const gridPowerContactSignals = new Set(['alarm', 'burglary', 'power']);
-    const statusAlarmActive = gridPowerDetector ? false : alarmActive;
-    const statusSignals = gridPowerDetector
-      ? activeSignals.filter((signal) => !gridPowerContactSignals.has(signal))
-      : activeSignals;
+    const gridPowerAlarmState = gridPowerAlarmEntry
+      ? readBinaryAlarmState(states[gridPowerAlarmEntry.entity_id])
+      : null;
+    // Home Assistant explicitly chooses which raw Transmitter alarm represents
+    // utility power. The bridge remains domain-neutral and publishes only the
+    // input alarm state.
+    const gridPowerDetector = gridPowerAlarmEntry !== undefined;
+    const gridPowerState = gridPowerDetector && gridPowerAlarmState !== null
+      ? !gridPowerAlarmState
+      : null;
 
     const signalHeadline = summarizeHeadline({
-      alarmActive: statusAlarmActive,
+      alarmActive,
       tamperActive,
       troubleActive,
-      activeSignals: statusSignals,
+      activeSignals,
     });
     const signalSeverity = severityFromSignals({
-      alarmActive: statusAlarmActive,
+      alarmActive,
       tamperActive,
       troubleActive,
-      activeSignals: statusSignals,
+      activeSignals,
     });
-    const securityAlarm = statusAlarmActive || tamperActive || statusSignals.some((signal) => SECURITY_SIGNALS.has(signal));
+    const securityAlarm = alarmActive || tamperActive || activeSignals.some((signal) => SECURITY_SIGNALS.has(signal));
     let severity = Math.max(signalSeverity, health.severity);
     let headline = securityAlarm || signalSeverity >= health.severity ? signalHeadline : health.warning;
-    const gridPowerContactActive = alarmActive || activeSignals.some((signal) => gridPowerContactSignals.has(signal));
-    const eventType = gridPowerDetector && gridPowerContactActive
+    const eventType = gridPowerState === false
       ? 'power_loss'
-      : mapSignalToEventType(alarmSignal || lastSignal, statusAlarmActive, offline);
+      : mapSignalToEventType(alarmSignal || lastSignal, alarmActive, offline);
     const actions = isPhysicalAjaxButtonType(type)
       ? undefined
       : buildDeviceActions(actionEntries, states, { deviceType: type, linkedEntries: linkedEntities });
@@ -524,7 +542,7 @@ function buildAjaxDevices(
       if (severity < 2) headline = 'Control state unknown';
       severity = Math.max(severity, 2);
     }
-    const metrics = buildDeviceMetrics(
+    const deviceMetrics = buildDeviceMetrics(
       linkedEntities,
       states,
       {
@@ -532,25 +550,25 @@ function buildAjaxDevices(
         lastEventAt,
         lastSignal,
         alarmSignal,
-        alarmActive: statusAlarmActive,
+        alarmActive,
         tamperActive,
         troubleActive,
-        activeSignals: statusSignals,
+        activeSignals,
       },
       {
         calculateApparentPower: type === 'wall_switch',
         deviceType: type,
-        suppressedAjaxSignals: gridPowerDetector ? gridPowerContactSignals : undefined,
+        excludedEntityIds: gridPowerAlarmEntry ? new Set([gridPowerAlarmEntry.entity_id]) : undefined,
       },
     );
-    const explicitGridPowerState = readGridPowerMetric(metrics);
-    const gridPowerState = gridPowerDetector
-      ? explicitGridPowerState ?? (gridPowerContactActive ? false : null)
-      : null;
+    const metrics = withGridPowerMetric(deviceMetrics, gridPowerState, gridPowerAlarmEntry?.entity_id);
     const gridPowerOutage = gridPowerState === false;
     if (gridPowerOutage && severity < 2) {
       severity = 1;
       headline = 'Grid power off';
+    } else if (gridPowerDetector && gridPowerState === null && severity < 2) {
+      severity = 1;
+      headline = 'Grid power unknown';
     }
 
     output.push({
@@ -580,28 +598,11 @@ function buildAjaxDevices(
       severity,
       securityAlarm,
       activeSafety: { smoke: activeSignals.some((signal) => ['fire', 'smoke', 'temperature'].includes(signal)), co: activeSignals.some((signal) => ['co', 'gas', 'gas_or_co'].includes(signal)) },
-      roles,
       gridPowerState,
     });
   }
 
   return output;
-}
-
-function ajaxDeviceRoles(
-  entries: HomeAssistantEntityEntry[],
-  states: Record<string, HomeAssistantState>,
-): string[] {
-  const roles = new Set<string>();
-  for (const entry of entries) {
-    const raw = states[entry.entity_id]?.attributes.roles;
-    const values = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',') : [];
-    for (const value of values) {
-      const role = slugPart(value);
-      if (role) roles.add(role);
-    }
-  }
-  return [...roles].sort();
 }
 
 function buildDahuaDevices(
@@ -768,7 +769,6 @@ function buildGenericIntegrationDevice(
     cameraLike: type === 'camera',
     sensorLike: type !== 'camera',
     severity,
-    roles: [],
     gridPowerState: null,
   };
 }
@@ -1049,7 +1049,8 @@ function buildSystemState(
   entities: HomeAssistantEntityEntry[] = [],
   accountFilter?: string,
 ): SystemState {
-  const alertCount = devices.filter((device) => device.attention).length;
+  const alertDevices = devices.filter((device) => device.attention);
+  const alertCount = alertDevices.length;
   const smdIvsTotals = rooms.reduce<RoomSmdIvsCounts>((totals, room) => {
     const counts = room.smdIvs ?? emptySmdIvsCounts();
     totals.total += counts.total;
@@ -1068,15 +1069,88 @@ function buildSystemState(
     const owner = ajaxEntityOwner(entry.unique_id, states[entry.entity_id]?.attributes ?? {});
     return owner?.startsWith('account_') && (!accountFilter || owner === `account_${accountFilter.toLowerCase()}`);
   });
-  const accountModes = accountEntities
+  const accountModeSources = accountEntities
     .filter((entry) => ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes) === 'mode')
-    .map((entry) => safeString(states[entry.entity_id]?.state))
-    .filter(Boolean);
+    .map((entry) => ({
+      entry,
+      state: states[entry.entity_id],
+      mode: safeString(states[entry.entity_id]?.state),
+    }));
+  const accountModes = accountModeSources.map(({ mode }) => mode).filter(Boolean);
   const alarmActive = accountEntities.some(
     (entry) => ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes) === 'alarm_active' && isOn(states[entry.entity_id]),
   ) || devices.some((device) => device.securityAlarm);
   const armed = accountModes.some((mode) => mode === 'armed' || mode === 'night');
   const primaryMode = alarmActive ? 'Alarm' : accountModes[0] ? humanizeSlug(accountModes[0]) : 'Monitoring';
+  const securityAlarmDevices = devices.filter((device) => device.securityAlarm);
+  const securityItems: DashboardChipDetailItem[] = [
+    ...accountModeSources.map(({ entry, state, mode }) => ({
+      id: `entity:${entry.entity_id}`,
+      label: entityDisplayName(entry, state),
+      value: mode ? humanizeSlug(mode) : 'Unknown',
+      tone: (mode === 'armed' || mode === 'night' ? 'amber' : mode ? 'green' : 'slate') as GlowTone,
+    })),
+    ...securityAlarmDevices.map((device) => ({
+      id: `device:${device.id}`,
+      label: device.name,
+      value: device.status,
+      tone: 'red' as GlowTone,
+    })),
+  ];
+  if (securityItems.length === 0) {
+    securityItems.push({
+      id: 'security-state',
+      label: 'Current state',
+      value: primaryMode,
+      tone: alarmActive ? 'red' : armed ? 'amber' : 'slate',
+    });
+  }
+
+  const gridPowerDevices = devices.filter((device) =>
+    device.gridPowerState !== null || device.metrics?.some((metric) => metric.label === 'Grid power'),
+  );
+  const gridPowerItems: DashboardChipDetailItem[] = gridPowerDevices.map((device) => ({
+    id: `device:${device.id}`,
+    label: device.name,
+    value: device.gridPowerState === null ? 'Unknown' : device.gridPowerState ? 'Mains' : 'Outage',
+    tone: device.gridPowerState === null ? 'slate' : device.gridPowerState ? 'green' : 'amber',
+  }));
+  if (gridPowerItems.length === 0) {
+    gridPowerItems.push({
+      id: 'grid-power-unconfigured',
+      label: 'Configured grid inputs',
+      value: 'None available',
+      tone: 'slate',
+    });
+  }
+
+  const smdTotal = smdIvsTotals.human + smdIvsTotals.vehicle + smdIvsTotals.animal;
+  const smdItems: DashboardChipDetailItem[] = [
+    { id: 'smd-human', label: 'People', value: String(smdIvsTotals.human), tone: smdIvsTotals.human > 0 ? 'violet' : 'slate' },
+    { id: 'smd-vehicle', label: 'Vehicles', value: String(smdIvsTotals.vehicle), tone: smdIvsTotals.vehicle > 0 ? 'violet' : 'slate' },
+    { id: 'smd-animal', label: 'Animals', value: String(smdIvsTotals.animal), tone: smdIvsTotals.animal > 0 ? 'violet' : 'slate' },
+    ...rooms
+      .filter((room) => roomSmdCount(room) > 0)
+      .map((room) => ({
+        id: `room:${room.id}`,
+        label: `Room: ${room.name}`,
+        value: String(roomSmdCount(room)),
+        tone: 'violet' as GlowTone,
+      })),
+  ];
+  const ivsRoomItems: DashboardChipDetailItem[] = rooms
+    .filter((room) => (room.smdIvs?.ivs ?? 0) > 0)
+    .map((room) => ({
+      id: `room:${room.id}`,
+      label: room.name,
+      value: String(room.smdIvs?.ivs ?? 0),
+      tone: 'amber' as GlowTone,
+    }));
+  const ivsItems = ivsRoomItems.length > 0
+    ? ivsRoomItems
+    : [{ id: 'ivs-total', label: 'Tripwire / intrusion events', value: String(smdIvsTotals.ivs), tone: 'slate' as GlowTone }];
+  const outletItems = buildSwitchChipDetailItems(outletDevices);
+  const lightSwitchItems = buildSwitchChipDetailItems(lightSwitchDevices);
   const chips: DashboardChip[] = [
     {
       id: 'system-mode',
@@ -1085,6 +1159,13 @@ function buildSystemState(
       icon: { category: 'system-states', key: alarmActive ? 'alarm_active' : armed ? 'armed' : 'disarmed' },
       tone: alarmActive ? 'red' : armed ? 'amber' : 'green',
       active: true,
+      details: {
+        title: 'Security mode',
+        summary: alarmActive
+          ? 'An active Ajax security signal is present. The affected source is listed below.'
+          : 'Current Ajax account arming state. Device warnings are listed separately under Alerts.',
+        items: securityItems,
+      },
     },
     {
       id: 'system-grid-power',
@@ -1097,14 +1178,26 @@ function buildSystemState(
       icon: { category: 'system-states', key: gridPower.outage > 0 ? 'power_loss' : 'grid_power' },
       tone: gridPower.outage > 0 ? 'amber' : gridPower.known > 0 ? 'green' : 'slate',
       active: gridPower.known > 0,
+      details: {
+        title: 'Grid power',
+        summary: gridPower.outage > 0
+          ? 'Informational mains status: an HA-configured input reports a utility outage. This is not a security alarm.'
+          : 'Informational mains status from the raw input alarms explicitly mapped in Home Assistant.',
+        items: gridPowerItems,
+      },
     },
     {
       id: 'system-smd',
       label: 'SMD today',
-      value: String(smdIvsTotals.human + smdIvsTotals.vehicle + smdIvsTotals.animal),
+      value: String(smdTotal),
       icon: { category: 'events', key: 'human_detected' },
       tone: 'violet',
-      active: smdIvsTotals.human + smdIvsTotals.vehicle + smdIvsTotals.animal > 0,
+      active: smdTotal > 0,
+      details: {
+        title: 'Smart Motion Detection',
+        summary: 'The total is people + vehicles + animals reported by SMD analytics. Room rows show where those events were counted.',
+        items: smdItems,
+      },
     },
     {
       id: 'system-ivs',
@@ -1113,6 +1206,11 @@ function buildSystemState(
       icon: { category: 'events', key: 'tripwire_detected' },
       tone: 'amber',
       active: smdIvsTotals.ivs > 0,
+      details: {
+        title: 'IVS events',
+        summary: 'Tripwire and intrusion events reported by camera IVS analytics, grouped by Home Assistant room.',
+        items: ivsItems,
+      },
     },
     {
       id: 'system-outlets',
@@ -1121,6 +1219,11 @@ function buildSystemState(
       icon: { category: 'devices', key: 'smart_plug' },
       tone: outletOnCount > 0 ? 'green' : 'slate',
       active: outletDevices.length > 0 && outletOnCount > 0,
+      details: {
+        title: 'Outlets',
+        summary: 'The first number is outlets currently on; the second is every Ajax Socket or WallSwitch counted by this card.',
+        items: outletItems,
+      },
     },
     {
       id: 'system-lights',
@@ -1129,6 +1232,11 @@ function buildSystemState(
       icon: { category: 'devices', key: 'light_switch' },
       tone: lightSwitchOnCount > 0 ? 'green' : 'slate',
       active: lightSwitchDevices.length > 0 && lightSwitchOnCount > 0,
+      details: {
+        title: 'Light switches',
+        summary: 'The first number is light switches currently on; the second is every light switch counted by this card.',
+        items: lightSwitchItems,
+      },
     },
   ];
 
@@ -1140,10 +1248,71 @@ function buildSystemState(
       icon: { category: 'misc', key: 'alert' },
       tone: 'amber',
       active: true,
+      details: {
+        title: 'Devices needing attention',
+        summary: 'Current device faults, security alarms, offline devices, or unknown control states. Informational grid outages are excluded.',
+        items: alertDevices.map((device) => ({
+          id: `device:${device.id}`,
+          label: device.name,
+          value: device.status,
+          tone: device.tone,
+        })),
+      },
     });
   }
 
   return { chips };
+}
+
+function roomSmdCount(room: Room): number {
+  const counts = room.smdIvs;
+  return (counts?.human ?? 0) + (counts?.vehicle ?? 0) + (counts?.animal ?? 0);
+}
+
+function buildSwitchChipDetailItems(devices: ResolvedDevice[]): DashboardChipDetailItem[] {
+  if (devices.length === 0) {
+    return [{
+      id: 'none-discovered',
+      label: 'Discovered devices',
+      value: 'None',
+      tone: 'slate',
+    }];
+  }
+
+  return devices.map((device) => {
+    const control = device.actions?.find((action) => action.domain === 'switch' || action.domain === 'valve');
+    if (control?.controlState) {
+      return {
+        id: `device:${device.id}`,
+        label: device.name,
+        value: controlStateLabel(control.controlState, control.domain === 'valve'),
+        tone: control.controlState === 'on'
+          ? 'green'
+          : control.controlState === 'off'
+            ? 'slate'
+            : 'amber',
+      };
+    }
+
+    if (device.actions?.some((action) => action.service === 'turn_off')) {
+      return { id: `device:${device.id}`, label: device.name, value: 'On', tone: 'green' };
+    }
+    if (device.actions?.some((action) => action.service === 'turn_on')) {
+      return { id: `device:${device.id}`, label: device.name, value: 'Off', tone: 'slate' };
+    }
+
+    const switchMetric = device.metrics?.find((metric) => metric.label.toLowerCase().includes('switch'));
+    if (switchMetric) {
+      return {
+        id: `device:${device.id}`,
+        label: device.name,
+        value: switchMetric.value,
+        tone: switchMetric.value.toLowerCase() === 'on' ? 'green' : switchMetric.tone,
+      };
+    }
+
+    return { id: `device:${device.id}`, label: device.name, value: 'Unknown', tone: 'slate' };
+  });
 }
 
 function isOutletOrWallSwitchDevice(device: ResolvedDevice): boolean {
@@ -1177,26 +1346,27 @@ function summarizeGridPower(devices: ResolvedDevice[]): GridPowerSummary {
   }, emptyGridPowerSummary());
 }
 
-function readGridPowerMetric(metrics?: DashboardMetric[]): boolean | null {
-  const metric = (metrics ?? []).find((candidate) => candidate.label.toLowerCase() === 'grid power');
-  if (!metric) {
-    return null;
-  }
-
-  const value = metric.value.toLowerCase();
-  if (/\bmains\b|\bon\b|\bok\b|online|restored|available/.test(value)) {
-    return true;
-  }
-  if (/off|inactive|lost|outage|unavailable|offline|fail/.test(value)) {
-    return false;
-  }
+function readBinaryAlarmState(state?: HomeAssistantState): boolean | null {
+  const value = safeString(state?.state).toLowerCase();
+  if (['on', 'true', '1', 'active', 'alarm'].includes(value)) return true;
+  if (['off', 'false', '0', 'clear', 'normal'].includes(value)) return false;
   return null;
 }
 
-function isGridPowerDetector(device: Pick<Device, 'type' | 'name' | 'model'> & { roles: string[] }): boolean {
-  const text = `${device.type} ${device.name} ${device.model}`.toLowerCase();
-  return device.roles.includes('grid_power_detector')
-    && /(^|[\s_-])transmitter($|[\s_-])|transmitter_jeweller|superior_transmitter/.test(text);
+function withGridPowerMetric(
+  metrics: DashboardMetric[] | undefined,
+  gridPowerState: boolean | null,
+  sourceEntityId?: string,
+): DashboardMetric[] | undefined {
+  if (!sourceEntityId) return metrics;
+  const gridMetric: DashboardMetric = {
+    id: `metric:grid_power:${sourceEntityId}`,
+    label: 'Grid power',
+    value: gridPowerState === null ? 'Unknown' : gridPowerState ? 'Mains' : 'Off',
+    icon: { category: 'system-states', key: gridPowerState === false ? 'power_loss' : 'grid_power' },
+    tone: gridPowerState === null ? 'slate' : gridPowerState ? 'green' : 'amber',
+  };
+  return [gridMetric, ...(metrics ?? [])].slice(0, MAX_DEVICE_METRICS);
 }
 
 function deviceDescriptor(device: ResolvedDevice): string {
@@ -1928,9 +2098,7 @@ function buildDeviceMetrics(
   }
 
   for (const entry of entries) {
-    const semantic = ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes);
-    const signal = semantic?.startsWith('signal_') ? semantic.slice('signal_'.length) : null;
-    if (signal && options.suppressedAjaxSignals?.has(signal)) {
+    if (options.excludedEntityIds?.has(entry.entity_id)) {
       continue;
     }
     const relayState = relayStateMetricCandidate(entry, states[entry.entity_id], options.deviceType);

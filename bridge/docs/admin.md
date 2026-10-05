@@ -23,7 +23,6 @@ Editable fields:
 - room
 - kind/model
 - expected event signals
-- semantic roles such as `grid_power_detector`
 - Jeedom names
 - Jeedom command ids
 
@@ -39,7 +38,7 @@ The SIA / Jeedom Matching tab shows:
 - diagnostic, visibility, historization, unmapped, and synthetic-id indicators when applicable
 - current linked SIA account/zone for Jeedom devices
 
-For a linked Jeedom device, **Merge numeric IDs** adds all current numeric Jeedom info and action command ids to the matching SIA account/zone row and opens that row in the Device Catalog. Synthetic identifiers such as `grid_power` are ignored. Unsaved Device Catalog form edits are preserved. Review the highlighted row and press **Save catalog** to persist the merge. This prevents duplicate Home Assistant devices.
+For a linked Jeedom device, **Merge numeric IDs** adds all current numeric Jeedom info and action command ids to the matching SIA account/zone row and opens that row in the Device Catalog. Synthetic identifiers such as `input_alarm` are ignored. Unsaved Device Catalog form edits are preserved. Review the highlighted row and press **Save catalog** to persist the merge. This prevents duplicate Home Assistant devices.
 
 Matching fields in `data/devices.json`:
 
@@ -48,13 +47,10 @@ Matching fields in `data/devices.json`:
   "account": "A0F80D",
   "zone": "8",
   "name": "Server power",
-  "roles": [],
   "jeedom_names": ["Server power"],
   "jeedom_command_ids": ["52", "53", "54", "55", "56", "57", "58", "59"]
 }
 ```
-
-Use `"roles": ["grid_power_detector"]` only for a Transmitter whose physical input monitors utility power. For that role, `M_11_3F` means mains unavailable and `M_11_40` means restored; the dashboard presents an outage as informational rather than a security alarm.
 
 ## Notification Editing
 
