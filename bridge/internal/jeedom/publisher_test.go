@@ -199,6 +199,30 @@ func TestPublishDeviceRetriesPersistedDiscoveryCleanups(t *testing.T) {
 	}
 }
 
+func TestCleanupSyntheticGridPowerDiscovery(t *testing.T) {
+	mqtt := &recordingMQTT{}
+	publisher := NewPublisher(PublisherConfig{
+		Discovery:       true,
+		DiscoveryPrefix: "homeassistant",
+		DiscoveryNode:   "ajaxbridge",
+	}, mqtt)
+	command := Command{
+		DeviceSlug: "sia_a0f80d_zone_24",
+		Metric:     "grid_power",
+		Component:  ComponentBinarySensor,
+	}
+
+	if err := publisher.CleanupCommands(t.Context(), []Command{command}); err != nil {
+		t.Fatal(err)
+	}
+	for _, component := range []string{ComponentBinarySensor, ComponentSensor} {
+		topic := "homeassistant/" + component + "/ajaxbridge/jeedom_sia_a0f80d_zone_24_grid_power/config"
+		if payload, ok := mqtt.discovery[topic]; !ok || payload != "" || !mqtt.discoveryRetain[topic] {
+			t.Fatalf("synthetic cleanup %s = %q present=%v retain=%v", topic, payload, ok, mqtt.discoveryRetain[topic])
+		}
+	}
+}
+
 func TestPublishDeviceCleansOneRemovedButtonWhileKeepingOthers(t *testing.T) {
 	mqtt := &recordingMQTT{}
 	publisher := NewPublisher(PublisherConfig{

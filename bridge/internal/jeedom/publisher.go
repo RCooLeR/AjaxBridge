@@ -121,7 +121,7 @@ func (p *Publisher) CleanupCommands(ctx context.Context, commands []Command) err
 	}
 	commands = append([]Command(nil), commands...)
 	sort.Slice(commands, func(i, j int) bool {
-		return commands[i].CommandID < commands[j].CommandID
+		return commandCleanupKey(commands[i]) < commandCleanupKey(commands[j])
 	})
 	for _, command := range commands {
 		if err := p.publishCommandDiscoveryCleanup(ctx, command, "jeedom_removed_command_cleanup"); err != nil {

@@ -372,6 +372,7 @@ Jeedom and SIA often describe the same physical Ajax device. To avoid duplicate 
   "room": "Boiler room",
   "kind": "WallSwitch",
   "events": ["power", "connectivity", "hardware", "firmware"],
+  "roles": [],
   "jeedom_names": ["Server power", "Serverna"],
   "jeedom_command_ids": ["52", "53", "54", "55", "56", "57", "58", "59"]
 }
@@ -381,6 +382,7 @@ Linking rules:
 
 - `jeedom_command_ids` are the strongest match.
 - `jeedom_names` match repaired/transliterated Jeedom device names.
+- `roles: ["grid_power_detector"]` explicitly identifies a Transmitter used for mains monitoring. Generic Transmitters are never interpreted as grid-power sensors.
 - `AJAXBRIDGE_JEEDOM_ACCOUNT_NAMES` links hub/system Jeedom equipment to the SIA account device.
 - Linked Jeedom devices reuse the SIA HA identifier `ajaxbridge_<account>_zone_<zone>`.
 - Unlinked Jeedom devices do not publish Home Assistant discovery by default because `AJAXBRIDGE_JEEDOM_DISCOVER_UNLINKED=false`.

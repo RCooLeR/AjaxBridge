@@ -123,6 +123,8 @@ interface ResolvedDevice extends Device {
   securityAlarm?: boolean;
   activeSafety?: { smoke: boolean; co: boolean };
   metrics?: DashboardMetric[];
+  roles: string[];
+  gridPowerState: boolean | null;
 }
 
 interface RoomMetrics {
@@ -157,6 +159,7 @@ interface AjaxDeviceMetricContext {
 interface DeviceMetricOptions {
   calculateApparentPower?: boolean;
   deviceType?: string;
+  suppressedAjaxSignals?: ReadonlySet<string>;
 }
 
 interface DeviceActionContext {
@@ -476,29 +479,44 @@ function buildAjaxDevices(
       deviceClass: safeString(states[entry.entity_id]?.attributes.device_class).toLowerCase(),
     })), activeSignals);
 
-    const signalHeadline = summarizeHeadline({
-      alarmActive,
-      tamperActive,
-      troubleActive,
-      activeSignals,
-    });
-    const signalSeverity = severityFromSignals({
-      alarmActive,
-      tamperActive,
-      troubleActive,
-      activeSignals,
-    });
-    const securityAlarm = alarmActive || tamperActive || activeSignals.some((signal) => SECURITY_SIGNALS.has(signal));
-    let severity = Math.max(signalSeverity, health.severity);
-    let headline = securityAlarm || signalSeverity >= health.severity ? signalHeadline : health.warning;
     const offline = !health.online;
     const sourceLabel = displayName(deviceEntry, linkedEntities, states);
+    const model = accountDevice ? 'Hub' : safeString(deviceEntry.model);
     const type = inferDeviceType({
       name: sourceLabel,
-      model: accountDevice ? 'Hub' : safeString(deviceEntry.model),
+      model,
       entityIds: linkedEntities.map((entry) => entry.entity_id),
     });
-    const eventType = mapSignalToEventType(alarmSignal || lastSignal, alarmActive, offline);
+    const roles = ajaxDeviceRoles(linkedEntities, states);
+    // A dedicated Transmitter wired to the utility input reports its contact
+    // as an Ajax power alarm. That is the observed mains state, not a security
+    // incident and not a device-health fault.
+    const gridPowerDetector = isGridPowerDetector({ type, name: sourceLabel, model, roles });
+    const gridPowerContactSignals = new Set(['alarm', 'burglary', 'power']);
+    const statusAlarmActive = gridPowerDetector ? false : alarmActive;
+    const statusSignals = gridPowerDetector
+      ? activeSignals.filter((signal) => !gridPowerContactSignals.has(signal))
+      : activeSignals;
+
+    const signalHeadline = summarizeHeadline({
+      alarmActive: statusAlarmActive,
+      tamperActive,
+      troubleActive,
+      activeSignals: statusSignals,
+    });
+    const signalSeverity = severityFromSignals({
+      alarmActive: statusAlarmActive,
+      tamperActive,
+      troubleActive,
+      activeSignals: statusSignals,
+    });
+    const securityAlarm = statusAlarmActive || tamperActive || statusSignals.some((signal) => SECURITY_SIGNALS.has(signal));
+    let severity = Math.max(signalSeverity, health.severity);
+    let headline = securityAlarm || signalSeverity >= health.severity ? signalHeadline : health.warning;
+    const gridPowerContactActive = alarmActive || activeSignals.some((signal) => gridPowerContactSignals.has(signal));
+    const eventType = gridPowerDetector && gridPowerContactActive
+      ? 'power_loss'
+      : mapSignalToEventType(alarmSignal || lastSignal, statusAlarmActive, offline);
     const actions = isPhysicalAjaxButtonType(type)
       ? undefined
       : buildDeviceActions(actionEntries, states, { deviceType: type, linkedEntries: linkedEntities });
@@ -514,13 +532,26 @@ function buildAjaxDevices(
         lastEventAt,
         lastSignal,
         alarmSignal,
-        alarmActive,
+        alarmActive: statusAlarmActive,
         tamperActive,
         troubleActive,
-        activeSignals,
+        activeSignals: statusSignals,
       },
-      { calculateApparentPower: type === 'wall_switch', deviceType: type },
+      {
+        calculateApparentPower: type === 'wall_switch',
+        deviceType: type,
+        suppressedAjaxSignals: gridPowerDetector ? gridPowerContactSignals : undefined,
+      },
     );
+    const explicitGridPowerState = readGridPowerMetric(metrics);
+    const gridPowerState = gridPowerDetector
+      ? explicitGridPowerState ?? (gridPowerContactActive ? false : null)
+      : null;
+    const gridPowerOutage = gridPowerState === false;
+    if (gridPowerOutage && severity < 2) {
+      severity = 1;
+      headline = 'Grid power off';
+    }
 
     output.push({
       id: owner,
@@ -549,10 +580,28 @@ function buildAjaxDevices(
       severity,
       securityAlarm,
       activeSafety: { smoke: activeSignals.some((signal) => ['fire', 'smoke', 'temperature'].includes(signal)), co: activeSignals.some((signal) => ['co', 'gas', 'gas_or_co'].includes(signal)) },
+      roles,
+      gridPowerState,
     });
   }
 
   return output;
+}
+
+function ajaxDeviceRoles(
+  entries: HomeAssistantEntityEntry[],
+  states: Record<string, HomeAssistantState>,
+): string[] {
+  const roles = new Set<string>();
+  for (const entry of entries) {
+    const raw = states[entry.entity_id]?.attributes.roles;
+    const values = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',') : [];
+    for (const value of values) {
+      const role = slugPart(value);
+      if (role) roles.add(role);
+    }
+  }
+  return [...roles].sort();
 }
 
 function buildDahuaDevices(
@@ -719,6 +768,8 @@ function buildGenericIntegrationDevice(
     cameraLike: type === 'camera',
     sensorLike: type !== 'camera',
     severity,
+    roles: [],
+    gridPowerState: null,
   };
 }
 
@@ -805,6 +856,7 @@ function buildEvents(devices: ResolvedDevice[]): EventItem[] {
         return [];
       }
 
+      const informational = !device.attention && device.severity > 0;
       return [{
         id: `event:${device.id}`,
         roomId: device.roomId,
@@ -813,11 +865,13 @@ function buildEvents(devices: ResolvedDevice[]): EventItem[] {
         title: device.attention ? device.lastEventDescription : `${device.name}: ${device.status}`,
         description: device.attention
           ? device.lastEventDescription
+          : informational
+            ? `${device.name} reports ${device.status.toLowerCase()}.`
           : `${device.name} reports normal state in this room.`,
         occurredAt: device.lastEventAt,
         source: device.sourceLabel,
-        icon: device.attention ? iconForEvent(device.lastEventType) : nominalIcon,
-        tone: device.attention ? device.tone : 'green',
+        icon: device.attention || informational ? iconForEvent(device.lastEventType) : nominalIcon,
+        tone: device.attention || informational ? device.tone : 'green',
       }];
     })
     .sort((left, right) => toUnix(right.occurredAt) - toUnix(left.occurredAt));
@@ -892,7 +946,7 @@ function emptyGridPowerSummary(): GridPowerSummary {
 }
 
 function applyDeviceGridPower(summary: GridPowerSummary, device: ResolvedDevice): void {
-  const state = readGridPowerState(device);
+  const state = device.gridPowerState;
   if (state === null) {
     return;
   }
@@ -1041,7 +1095,7 @@ function buildSystemState(
           : `${gridPower.online}/${gridPower.known} OK`
         : 'Unknown',
       icon: { category: 'system-states', key: gridPower.outage > 0 ? 'power_loss' : 'grid_power' },
-      tone: gridPower.outage > 0 ? 'red' : gridPower.known > 0 ? 'green' : 'slate',
+      tone: gridPower.outage > 0 ? 'amber' : gridPower.known > 0 ? 'green' : 'slate',
       active: gridPower.known > 0,
     },
     {
@@ -1123,15 +1177,8 @@ function summarizeGridPower(devices: ResolvedDevice[]): GridPowerSummary {
   }, emptyGridPowerSummary());
 }
 
-function readGridPowerState(device: Pick<Device, 'type' | 'name' | 'model' | 'metrics'>): boolean | null {
-  if (!isGridPowerDetector(device)) {
-    return null;
-  }
-
-  const metric = (device.metrics ?? []).find((candidate) => {
-    const label = candidate.label.toLowerCase();
-    return label.includes('grid power') || label === 'power';
-  });
+function readGridPowerMetric(metrics?: DashboardMetric[]): boolean | null {
+  const metric = (metrics ?? []).find((candidate) => candidate.label.toLowerCase() === 'grid power');
   if (!metric) {
     return null;
   }
@@ -1140,15 +1187,16 @@ function readGridPowerState(device: Pick<Device, 'type' | 'name' | 'model' | 'me
   if (/\bmains\b|\bon\b|\bok\b|online|restored|available/.test(value)) {
     return true;
   }
-  if (/off|lost|outage|unavailable|offline|fail/.test(value)) {
+  if (/off|inactive|lost|outage|unavailable|offline|fail/.test(value)) {
     return false;
   }
   return null;
 }
 
-function isGridPowerDetector(device: Pick<Device, 'type' | 'name' | 'model'>): boolean {
+function isGridPowerDetector(device: Pick<Device, 'type' | 'name' | 'model'> & { roles: string[] }): boolean {
   const text = `${device.type} ${device.name} ${device.model}`.toLowerCase();
-  return /(^|[\s_-])transmitter($|[\s_-])|transmitter_jeweller|superior_transmitter/.test(text);
+  return device.roles.includes('grid_power_detector')
+    && /(^|[\s_-])transmitter($|[\s_-])|transmitter_jeweller|superior_transmitter/.test(text);
 }
 
 function deviceDescriptor(device: ResolvedDevice): string {
@@ -1880,6 +1928,11 @@ function buildDeviceMetrics(
   }
 
   for (const entry of entries) {
+    const semantic = ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes);
+    const signal = semantic?.startsWith('signal_') ? semantic.slice('signal_'.length) : null;
+    if (signal && options.suppressedAjaxSignals?.has(signal)) {
+      continue;
+    }
     const relayState = relayStateMetricCandidate(entry, states[entry.entity_id], options.deviceType);
     if (relayState) {
       candidates.push(relayState);
@@ -2418,7 +2471,7 @@ function binaryMetricCandidate(
       id: `metric:${entry.entity_id}`,
       kind: gridPower ? 'grid_power' : 'external_power',
       label: gridPower ? 'Grid power' : 'Power',
-      value: active ? 'Mains' : humanizeHomeAssistantState(state),
+      value: active ? 'Mains' : gridPower ? 'Off' : humanizeHomeAssistantState(state),
       icon: { category: 'misc', key: 'energy' },
       tone: active ? 'green' : 'amber',
       priority: 33,
@@ -3142,7 +3195,7 @@ function toneFromSeverity(severity: number): GlowTone {
   if (severity >= 4) {
     return 'red';
   }
-  if (severity >= 2) {
+  if (severity >= 1) {
     return 'amber';
   }
   return 'green';

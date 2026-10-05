@@ -232,6 +232,7 @@ Fields:
 | `room` | HA suggested area and dashboard grouping. |
 | `kind` | HA model and dashboard category. |
 | `events` | Stable signal list used to pre-create binary sensors. |
+| `roles` | Explicit semantic roles. `grid_power_detector` opts one Transmitter into derived mains state. |
 | `jeedom_names` | Jeedom aliases that map to this SIA zone. |
 | `jeedom_command_ids` | Jeedom command ids that map to this SIA zone. |
 | `description` | Human note. |
@@ -247,6 +248,7 @@ Example:
     "room": "Boiler room",
     "kind": "WallSwitch",
     "events": ["power", "connectivity", "hardware", "firmware"],
+    "roles": [],
     "jeedom_names": ["Server power", "Serverna"],
     "jeedom_command_ids": ["52", "53", "54", "55", "56", "57", "58", "59"]
   }

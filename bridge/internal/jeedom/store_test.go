@@ -3,6 +3,8 @@ package jeedom
 import (
 	"encoding/json"
 	"math"
+	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -852,6 +854,81 @@ func TestStoreDerivesTransmitterGridPowerFromEventCode(t *testing.T) {
 		Zone:             "14",
 		Name:             "Grid detector",
 		Kind:             "Transmitter",
+		Roles:            []string{gridPowerDetectorRole},
+		JeedomCommandIDs: []string{"208"},
+	})
+	store := NewStoreWithResolver("keep_last", NewCatalogResolver(catalog, CatalogResolverConfig{}))
+
+	for index, test := range []struct {
+		code string
+		want bool
+	}{
+		{code: "M_11_3F", want: false},
+		{code: "M_11_40", want: true},
+	} {
+		result := store.Apply(Event{
+			Topic:       "jeedom/cmd/event/208",
+			CommandID:   "208",
+			DeviceName:  "Grid detector",
+			CommandName: "Code evenement",
+			Type:        "info",
+			Subtype:     "string",
+			Value:       json.RawMessage(strconv.Quote(test.code)),
+			ReceivedAt:  time.Unix(int64(100+index*10), 0),
+		})
+		if got := result.Device.Values["grid_power"]; got != test.want {
+			t.Fatalf("grid_power after %s = %#v, want %t", test.code, got, test.want)
+		}
+		if _, ok := result.Device.Values["state"]; ok {
+			t.Fatalf("state after %s = %#v, want no switch state", test.code, result.Device.Values["state"])
+		}
+		command := result.Device.RawCommands["grid_power"]
+		if command.Metric != "grid_power" || command.Component != ComponentBinarySensor || command.DeviceClass != "power" {
+			t.Fatalf("synthetic grid power command = %#v", command)
+		}
+		if command.Value != test.want {
+			t.Fatalf("synthetic grid power command value after %s = %#v, want %t", test.code, command.Value, test.want)
+		}
+		unknown := store.Apply(Event{
+			Topic:       "jeedom/cmd/event/208",
+			CommandID:   "208",
+			DeviceName:  "Grid detector",
+			CommandName: "Code evenement",
+			Type:        "info",
+			Subtype:     "string",
+			Value:       json.RawMessage(`"M_11_FF"`),
+			ReceivedAt:  time.Unix(int64(101+index*10), 0),
+		})
+		if got := unknown.Device.Values["grid_power"]; got != test.want {
+			t.Fatalf("grid_power after unrelated event following %s = %#v, want sticky %t", test.code, got, test.want)
+		}
+		if !test.want {
+			path := filepath.Join(t.TempDir(), "jeedom.json")
+			store.SetPath(path)
+			if err := store.Save(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			restored, err := LoadStore(t.Context(), path, "keep_last", NewCatalogResolver(catalog, CatalogResolverConfig{}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			devices := restored.Devices()
+			if len(devices) != 1 || devices[0].Values["grid_power"] != false {
+				t.Fatalf("restored grid outage = %#v, want one device with grid_power false", devices)
+			}
+			if command := devices[0].RawCommands["grid_power"]; command.Value != false {
+				t.Fatalf("restored synthetic grid power command = %#v, want false", command)
+			}
+		}
+	}
+}
+
+func TestStoreDoesNotDeriveOrdinaryTransmitterGridPower(t *testing.T) {
+	catalog := testCatalog(t, devicecatalog.Device{
+		Account:          "A0F80D",
+		Zone:             "24",
+		Name:             "Gate contact",
+		Kind:             "Transmitter",
 		JeedomCommandIDs: []string{"208"},
 	})
 	store := NewStoreWithResolver("keep_last", NewCatalogResolver(catalog, CatalogResolverConfig{}))
@@ -859,25 +936,126 @@ func TestStoreDerivesTransmitterGridPowerFromEventCode(t *testing.T) {
 	result := store.Apply(Event{
 		Topic:       "jeedom/cmd/event/208",
 		CommandID:   "208",
-		DeviceName:  "Grid detector",
+		DeviceName:  "Gate contact",
 		CommandName: "Code evenement",
 		Type:        "info",
 		Subtype:     "string",
 		Value:       json.RawMessage(`"M_11_40"`),
 		ReceivedAt:  time.Unix(100, 0),
 	})
-	if got := result.Device.Values["grid_power"]; got != true {
-		t.Fatalf("grid_power after M_11_40 = %#v, want true", got)
+	if _, ok := result.Device.Values["grid_power"]; ok {
+		t.Fatalf("ordinary Transmitter grid_power = %#v, want no derived value", result.Device.Values["grid_power"])
 	}
-	if _, ok := result.Device.Values["state"]; ok {
-		t.Fatalf("state after M_11_40 = %#v, want no switch state", result.Device.Values["state"])
+	if _, ok := result.Device.RawCommands["grid_power"]; ok {
+		t.Fatalf("ordinary Transmitter synthetic command = %#v, want none", result.Device.RawCommands["grid_power"])
 	}
-	command := result.Device.RawCommands["grid_power"]
-	if command.Metric != "grid_power" || command.Component != ComponentBinarySensor || command.DeviceClass != "power" {
-		t.Fatalf("synthetic grid power command = %#v", command)
+}
+
+func TestPersistedOrdinaryTransmitterQueuesSyntheticGridPowerCleanup(t *testing.T) {
+	at := time.Unix(100, 0).UTC()
+	path := filepath.Join(t.TempDir(), "jeedom.json")
+	store := NewStore("keep_last")
+	store.SetPath(path)
+	store.replaceDevices([]Device{{
+		Device:           "Gate contact",
+		DeviceSlug:       "sia_a0f80d_zone_24",
+		HAModel:          "Transmitter",
+		JeedomDeviceType: "Transmitter",
+		Values:           map[string]any{"event_code": "M_11_40", "grid_power": true},
+		RawCommands: map[string]Command{
+			"208": {
+				CommandID: "208", DeviceSlug: "sia_a0f80d_zone_24", Metric: "event_code",
+				Component: ComponentSensor, Value: "M_11_40", LastUpdate: at, LastValueAt: at,
+			},
+			"grid_power": {
+				DeviceSlug: "sia_a0f80d_zone_24", Metric: "grid_power", Component: ComponentBinarySensor,
+				DeviceClass: "power", Value: true, LastUpdate: at, LastValueAt: at,
+			},
+		},
+	}})
+
+	device, ok := store.Device("sia_a0f80d_zone_24")
+	if !ok {
+		t.Fatal("missing restored ordinary Transmitter")
 	}
-	if command.Value != true {
-		t.Fatalf("synthetic grid power command value = %#v, want true", command.Value)
+	if _, exists := device.Values["grid_power"]; exists {
+		t.Fatalf("stale grid_power value survived migration: %#v", device.Values)
+	}
+	if _, exists := device.RawCommands["grid_power"]; exists {
+		t.Fatalf("stale synthetic command survived migration: %#v", device.RawCommands)
+	}
+	if len(device.PendingDiscoveryCleanups) != 1 || commandCleanupKey(device.PendingDiscoveryCleanups[0]) != "derived:binary_sensor:sia_a0f80d_zone_24:grid_power" {
+		t.Fatalf("synthetic cleanup queue = %#v", device.PendingDiscoveryCleanups)
+	}
+
+	if err := store.Save(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := LoadStore(t.Context(), path, "keep_last", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredDevice, _ := restored.Device("sia_a0f80d_zone_24")
+	if len(restoredDevice.PendingDiscoveryCleanups) != 1 {
+		t.Fatalf("persisted synthetic cleanup queue = %#v", restoredDevice.PendingDiscoveryCleanups)
+	}
+	if !restored.AcknowledgeCommandCleanups(restoredDevice.PendingDiscoveryCleanups) {
+		t.Fatal("synthetic cleanup was not acknowledged")
+	}
+	acknowledged, _ := restored.Device("sia_a0f80d_zone_24")
+	if len(acknowledged.PendingDiscoveryCleanups) != 0 {
+		t.Fatalf("acknowledged synthetic cleanup still queued: %#v", acknowledged.PendingDiscoveryCleanups)
+	}
+}
+
+func TestReconcileResolverAppliesAndRemovesGridPowerDetectorRole(t *testing.T) {
+	at := time.Unix(100, 0).UTC()
+	withRole := testCatalog(t, devicecatalog.Device{
+		Account: "A0F80D", Zone: "10", Name: "Grid detector", Kind: "Transmitter",
+		Roles: []string{gridPowerDetectorRole}, JeedomCommandIDs: []string{"208"},
+	})
+	withoutRole := testCatalog(t, devicecatalog.Device{
+		Account: "A0F80D", Zone: "10", Name: "Grid detector", Kind: "Transmitter",
+		JeedomCommandIDs: []string{"208"},
+	})
+	store := NewStore("keep_last")
+	store.replaceDevices([]Device{{
+		Device:           "Grid detector",
+		DeviceSlug:       "sia_a0f80d_zone_10",
+		HAModel:          "Transmitter",
+		JeedomDeviceType: "Transmitter",
+		Values:           map[string]any{"event_code": "M_11_3F"},
+		RawCommands: map[string]Command{
+			"208": {
+				CommandID: "208", Device: "Grid detector", DeviceSlug: "sia_a0f80d_zone_10",
+				Name: "Event code", RawName: "Code evenement", Metric: "event_code", Component: ComponentSensor,
+				Type: "info", Subtype: "string", Value: "M_11_3F", LastUpdate: at, LastValueAt: at,
+			},
+		},
+	}})
+
+	store.ReconcileResolver(NewCatalogResolver(withRole, CatalogResolverConfig{}))
+	enabled, ok := store.Device("sia_a0f80d_zone_10")
+	if !ok || !hasDeviceRole(enabled, gridPowerDetectorRole) || enabled.Values["grid_power"] != false {
+		t.Fatalf("role-enabled detector = %#v, want derived grid_power false", enabled)
+	}
+	if command := enabled.RawCommands["grid_power"]; command.Value != false {
+		t.Fatalf("role-enabled synthetic command = %#v, want false", command)
+	}
+
+	store.ReconcileResolver(NewCatalogResolver(withoutRole, CatalogResolverConfig{}))
+	disabled, _ := store.Device("sia_a0f80d_zone_10")
+	if hasDeviceRole(disabled, gridPowerDetectorRole) {
+		t.Fatalf("removed role survived reconciliation: %#v", disabled.Roles)
+	}
+	if _, exists := disabled.Values["grid_power"]; exists {
+		t.Fatalf("grid_power survived role removal: %#v", disabled.Values)
+	}
+	if _, exists := disabled.RawCommands["grid_power"]; exists {
+		t.Fatalf("synthetic command survived role removal: %#v", disabled.RawCommands)
+	}
+	if len(disabled.PendingDiscoveryCleanups) != 1 || commandCleanupKey(disabled.PendingDiscoveryCleanups[0]) != "derived:binary_sensor:sia_a0f80d_zone_10:grid_power" {
+		t.Fatalf("role-removal cleanup queue = %#v", disabled.PendingDiscoveryCleanups)
 	}
 }
 
@@ -887,6 +1065,7 @@ func TestStoreDoesNotDeriveMultiTransmitterGridPowerFromTransmitterEventCode(t *
 		Zone:             "15",
 		Name:             "Multi input",
 		Kind:             "MultiTransmitter",
+		Roles:            []string{gridPowerDetectorRole},
 		JeedomCommandIDs: []string{"209"},
 	})
 	store := NewStoreWithResolver("keep_last", NewCatalogResolver(catalog, CatalogResolverConfig{}))

@@ -97,6 +97,8 @@ func TestAdminHTMLIncludesExpandedJeedomMatching(t *testing.T) {
 		`(model.jeedom_actions || []).forEach(function(action)`,
 		`Control action`,
 		`model.devices = collectDevices()`,
+		`data-field="roles"`,
+		`roles: splitCSV(value('roles'))`,
 		`catalogDevice.jeedom_command_ids = mergedIDs`,
 		`return /^\d+$/.test`,
 		`Press Save catalog to persist`,

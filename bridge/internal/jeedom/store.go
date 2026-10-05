@@ -11,7 +11,10 @@ import (
 	"time"
 )
 
-const Source = "jeedom"
+const (
+	Source                = "jeedom"
+	gridPowerDetectorRole = "grid_power_detector"
+)
 
 type EmptyValuePolicy string
 
@@ -49,6 +52,7 @@ type Device struct {
 	HAManufacturer                 string             `json:"ha_manufacturer,omitempty"`
 	HAModel                        string             `json:"ha_model,omitempty"`
 	SuggestedArea                  string             `json:"suggested_area,omitempty"`
+	Roles                          []string           `json:"roles,omitempty"`
 	LegacyDeviceSlugs              []string           `json:"legacy_device_slugs,omitempty"`
 	LinkedSource                   string             `json:"linked_source,omitempty"`
 	LinkedAccount                  string             `json:"linked_account,omitempty"`
@@ -160,6 +164,7 @@ type DeviceIdentity struct {
 	HAManufacturer    string
 	HAModel           string
 	SuggestedArea     string
+	Roles             []string
 	LegacyDeviceSlugs []string
 	LinkedSource      string
 	LinkedAccount     string
@@ -237,6 +242,7 @@ func (s *Store) Apply(evt Event) ApplyResult {
 	device.HAManufacturer = identity.HAManufacturer
 	device.HAModel = identity.HAModel
 	device.SuggestedArea = identity.SuggestedArea
+	device.Roles = append([]string(nil), identity.Roles...)
 	device.LegacyDeviceSlugs = mergeStringLists(device.LegacyDeviceSlugs, identity.LegacyDeviceSlugs)
 	device.LinkedSource = identity.LinkedSource
 	device.LinkedAccount = identity.LinkedAccount
@@ -406,6 +412,7 @@ func (s *Store) ApplyDiscovery(discovery Discovery) ApplyDiscoveryResult {
 	device.HAManufacturer = identity.HAManufacturer
 	device.HAModel = identity.HAModel
 	device.SuggestedArea = identity.SuggestedArea
+	device.Roles = append([]string(nil), identity.Roles...)
 	device.LegacyDeviceSlugs = mergeStringLists(device.LegacyDeviceSlugs, identity.LegacyDeviceSlugs)
 	device.LinkedSource = identity.LinkedSource
 	device.LinkedAccount = identity.LinkedAccount
@@ -846,10 +853,11 @@ func removePendingCommandCleanup(device *Device, commandID string) bool {
 	if device == nil || commandID == "" || len(device.PendingDiscoveryCleanups) == 0 {
 		return false
 	}
+	activeKey := commandCleanupKey(Command{CommandID: commandID})
 	kept := device.PendingDiscoveryCleanups[:0]
 	removed := false
 	for _, command := range device.PendingDiscoveryCleanups {
-		if command.CommandID != commandID {
+		if commandCleanupKey(command) != activeKey {
 			kept = append(kept, command)
 		} else {
 			removed = true
@@ -1327,6 +1335,7 @@ func (s *Store) ensureIdentityDeviceLocked(identity DeviceIdentity, source Devic
 	target.HAManufacturer = firstNonEmpty(identity.HAManufacturer, target.HAManufacturer, source.HAManufacturer)
 	target.HAModel = firstNonEmpty(identity.HAModel, target.HAModel, source.HAModel)
 	target.SuggestedArea = firstNonEmpty(identity.SuggestedArea, target.SuggestedArea)
+	target.Roles = append([]string(nil), identity.Roles...)
 	target.LinkedSource = identity.LinkedSource
 	target.LinkedAccount = identity.LinkedAccount
 	target.LinkedZone = identity.LinkedZone
@@ -1652,6 +1661,9 @@ func (s *Store) mergeDeviceIntoIdentityLocked(sourceSlug string, identity Device
 		}
 		target.Actions[actionName] = action
 	}
+	target.HAModel = firstNonEmpty(identity.HAModel, target.HAModel, source.HAModel)
+	target.JeedomDeviceType = firstNonEmpty(identity.HAModel, source.JeedomDeviceType, target.JeedomDeviceType)
+	target.Roles = append([]string(nil), identity.Roles...)
 	rebuildAllMetricValuesPreservingOptimisticState(target)
 	queueCommandCleanups(target, source.PendingDiscoveryCleanups)
 	queueActionCleanups(target, source.PendingActionDiscoveryCleanups)
@@ -2089,10 +2101,25 @@ func rebuildDerivedValuesForMetricChange(device *Device, metric string) {
 	if device.Values == nil {
 		device.Values = make(map[string]any)
 	}
+	gridPowerDetector := isGridPowerDetectorDevice(*device)
+	gridPower := false
+	gridPowerFound := false
+	gridPowerAt := time.Time{}
 	if rebuildGridPower {
 		for key, command := range device.RawCommands {
 			if command.CommandID == "" && command.Metric == "grid_power" {
-				delete(device.RawCommands, key)
+				if !gridPowerDetector {
+					queueCommandCleanups(device, []Command{command})
+					delete(device.RawCommands, key)
+					continue
+				}
+				state := effectiveCommandState(command)
+				value, ok := state.value.(bool)
+				if ok && (!gridPowerFound || state.observedAt.After(gridPowerAt)) {
+					gridPower = value
+					gridPowerFound = true
+					gridPowerAt = state.observedAt
+				}
 			}
 		}
 	}
@@ -2134,9 +2161,6 @@ func rebuildDerivedValuesForMetricChange(device *Device, metric string) {
 
 	var state any
 	stateFound := false
-	gridPower := false
-	gridPowerFound := false
-	gridPowerAt := time.Time{}
 	for _, command := range commands {
 		mapping := storedCommandMapping(command)
 		if rebuildState {
@@ -2168,13 +2192,16 @@ func rebuildDerivedValuesForMetricChange(device *Device, metric string) {
 				}
 			}
 		}
-		if rebuildGridPower {
+		if rebuildGridPower && gridPowerDetector {
 			if derived, ok := derivedGridPowerFromEventCode(mapping, *device, command.Value); ok {
-				gridPower = derived
-				gridPowerFound = true
-				gridPowerAt = command.LastValueAt
-				if gridPowerAt.IsZero() {
-					gridPowerAt = command.LastUpdate
+				observedAt := command.LastValueAt
+				if observedAt.IsZero() {
+					observedAt = command.LastUpdate
+				}
+				if !gridPowerFound || !observedAt.Before(gridPowerAt) {
+					gridPower = derived
+					gridPowerFound = true
+					gridPowerAt = observedAt
 				}
 			}
 		}
@@ -2187,7 +2214,7 @@ func rebuildDerivedValuesForMetricChange(device *Device, metric string) {
 		}
 	}
 	if rebuildGridPower {
-		if gridPowerFound {
+		if gridPowerDetector && gridPowerFound {
 			device.Values["grid_power"] = gridPower
 			ensureSyntheticGridPowerCommand(device, gridPower, gridPowerAt)
 		} else {
@@ -2240,26 +2267,39 @@ func queueCommandCleanups(device *Device, commands []Command) {
 	if device == nil || len(commands) == 0 {
 		return
 	}
-	byID := make(map[string]Command, len(device.PendingDiscoveryCleanups)+len(commands))
+	byKey := make(map[string]Command, len(device.PendingDiscoveryCleanups)+len(commands))
 	for _, command := range device.PendingDiscoveryCleanups {
-		if command.CommandID != "" {
-			byID[command.CommandID] = command
+		if key := commandCleanupKey(command); key != "" {
+			byKey[key] = command
 		}
 	}
 	for _, command := range commands {
-		if command.CommandID != "" {
-			byID[command.CommandID] = command
+		if key := commandCleanupKey(command); key != "" {
+			byKey[key] = command
 		}
 	}
-	ids := make([]string, 0, len(byID))
-	for commandID := range byID {
-		ids = append(ids, commandID)
+	keys := make([]string, 0, len(byKey))
+	for key := range byKey {
+		keys = append(keys, key)
 	}
-	sort.Strings(ids)
-	device.PendingDiscoveryCleanups = make([]Command, 0, len(ids))
-	for _, commandID := range ids {
-		device.PendingDiscoveryCleanups = append(device.PendingDiscoveryCleanups, byID[commandID])
+	sort.Strings(keys)
+	device.PendingDiscoveryCleanups = make([]Command, 0, len(keys))
+	for _, key := range keys {
+		device.PendingDiscoveryCleanups = append(device.PendingDiscoveryCleanups, byKey[key])
 	}
+}
+
+func commandCleanupKey(command Command) string {
+	if commandID := strings.TrimSpace(command.CommandID); commandID != "" {
+		return "id:" + commandID
+	}
+	component := strings.TrimSpace(command.Component)
+	deviceSlug := Slug(command.DeviceSlug)
+	metric := Slug(command.Metric)
+	if component == "" || deviceSlug == "" || metric == "" {
+		return ""
+	}
+	return "derived:" + component + ":" + deviceSlug + ":" + metric
 }
 
 func queueActionCleanups(device *Device, actions []Action) {
@@ -2409,10 +2449,12 @@ func derivedStateFromEventCode(mapping Mapping, device Device, value any) (bool,
 }
 
 func derivedGridPowerFromEventCode(mapping Mapping, device Device, value any) (bool, bool) {
-	if mapping.Metric != "event_code" || !isTransmitterDevice(device) {
+	if mapping.Metric != "event_code" || !isGridPowerDetectorDevice(device) {
 		return false, false
 	}
 	switch strings.ToUpper(strings.TrimSpace(fmt.Sprint(value))) {
+	case "M_11_3F":
+		return false, true
 	case "M_11_40":
 		return true, true
 	default:
@@ -2451,6 +2493,20 @@ func isWallSwitchDevice(device Device) bool {
 func isTransmitterDevice(device Device) bool {
 	deviceType := commandKey(firstNonEmpty(device.JeedomDeviceType, device.HAModel))
 	return strings.Contains(deviceType, "transmitter") && !strings.Contains(deviceType, "multitransmitter")
+}
+
+func isGridPowerDetectorDevice(device Device) bool {
+	return isTransmitterDevice(device) && hasDeviceRole(device, gridPowerDetectorRole)
+}
+
+func hasDeviceRole(device Device, role string) bool {
+	wanted := Slug(role)
+	for _, candidate := range device.Roles {
+		if Slug(candidate) == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func isWaterStopDevice(device Device) bool {
@@ -2620,8 +2676,8 @@ func (s *Store) AcknowledgeCommandCleanups(commands []Command) bool {
 	}
 	acknowledged := make(map[string]struct{}, len(commands))
 	for _, command := range commands {
-		if command.CommandID != "" {
-			acknowledged[command.CommandID] = struct{}{}
+		if key := commandCleanupKey(command); key != "" {
+			acknowledged[key] = struct{}{}
 		}
 	}
 	if len(acknowledged) == 0 {
@@ -2637,7 +2693,7 @@ func (s *Store) AcknowledgeCommandCleanups(commands []Command) bool {
 		}
 		kept := device.PendingDiscoveryCleanups[:0]
 		for _, pending := range device.PendingDiscoveryCleanups {
-			if _, ok := acknowledged[pending.CommandID]; ok {
+			if _, ok := acknowledged[commandCleanupKey(pending)]; ok {
 				changed = true
 				continue
 			}
@@ -2993,6 +3049,9 @@ func StatePayload(device Device) map[string]any {
 	if device.JeedomDeviceType != "" {
 		payload["jeedom_device_type"] = device.JeedomDeviceType
 	}
+	if len(device.Roles) > 0 {
+		payload["roles"] = append([]string(nil), device.Roles...)
+	}
 	if len(device.Actions) > 0 {
 		payload["actions"] = device.Actions
 	}
@@ -3018,6 +3077,9 @@ func AttributesPayload(device Device) map[string]any {
 	if device.JeedomDeviceType != "" {
 		payload["jeedom_device_type"] = device.JeedomDeviceType
 	}
+	if len(device.Roles) > 0 {
+		payload["roles"] = append([]string(nil), device.Roles...)
+	}
 	return payload
 }
 
@@ -3025,6 +3087,7 @@ func copyDevice(device Device) Device {
 	device.Values = copyAnyMap(device.Values)
 	device.RawCommands = copyCommands(device.RawCommands)
 	device.HAIdentifiers = append([]string(nil), device.HAIdentifiers...)
+	device.Roles = append([]string(nil), device.Roles...)
 	device.LegacyDeviceSlugs = append([]string(nil), device.LegacyDeviceSlugs...)
 	device.Actions = copyActions(device.Actions)
 	device.PendingDiscoveryCleanups = append([]Command(nil), device.PendingDiscoveryCleanups...)

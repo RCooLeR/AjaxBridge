@@ -108,7 +108,7 @@ Bridge SIA variables:
 
 ## Device Catalog
 
-The catalog is optional but strongly recommended. It gives stable names, rooms, kinds, expected signals, and Jeedom links.
+The catalog is optional but strongly recommended. It gives stable names, rooms, kinds, expected signals, explicit semantic roles, and Jeedom links.
 
 ```json
 [
@@ -119,6 +119,7 @@ The catalog is optional but strongly recommended. It gives stable names, rooms, 
     "room": "Boiler room",
     "kind": "WallSwitch",
     "events": ["power", "connectivity", "hardware", "firmware"],
+    "roles": [],
     "jeedom_names": ["Serverna"],
     "jeedom_command_ids": ["52", "53", "54", "55", "56", "57", "58", "59"]
   }
@@ -138,6 +139,7 @@ Catalog fields used by SIA:
 | `room` | Home Assistant suggested area and dashboard room. |
 | `kind` | Device model/category. |
 | `events` | Expected signal names used to pre-create HA binary sensors. |
+| `roles` | Optional semantic roles. Use `grid_power_detector` only for a Transmitter wired to utility-power presence. |
 | `jeedom_names` | Jeedom aliases for duplicate prevention. |
 | `jeedom_command_ids` | Jeedom command ids for duplicate prevention. |
 

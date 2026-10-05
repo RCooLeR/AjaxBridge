@@ -23,6 +23,7 @@ Editable fields:
 - room
 - kind/model
 - expected event signals
+- semantic roles such as `grid_power_detector`
 - Jeedom names
 - Jeedom command ids
 
@@ -47,10 +48,13 @@ Matching fields in `data/devices.json`:
   "account": "A0F80D",
   "zone": "8",
   "name": "Server power",
+  "roles": [],
   "jeedom_names": ["Server power"],
   "jeedom_command_ids": ["52", "53", "54", "55", "56", "57", "58", "59"]
 }
 ```
+
+Use `"roles": ["grid_power_detector"]` only for a Transmitter whose physical input monitors utility power. For that role, `M_11_3F` means mains unavailable and `M_11_40` means restored; the dashboard presents an outage as informational rather than a security alarm.
 
 ## Notification Editing
 

@@ -6,10 +6,18 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/RCooLeR/AjaxBridge/internal/devicecatalog"
 )
 
 func TestCommandsListsSyntheticObservationsBeforeAndAfterCacheRestore(t *testing.T) {
-	store := NewStore("keep_last")
+	catalog := testCatalog(t,
+		devicecatalog.Device{Account: "A0F80D", Zone: "1", Name: "Gate", Kind: "Transmitter", JeedomCommandIDs: []string{"100"}},
+		devicecatalog.Device{Account: "A0F80D", Zone: "2", Name: "Power", Kind: "Transmitter", Roles: []string{gridPowerDetectorRole}, JeedomCommandIDs: []string{"200"}},
+		devicecatalog.Device{Account: "A0F80D", Zone: "3", Name: "Wicket", Kind: "Transmitter", JeedomCommandIDs: []string{"300"}},
+	)
+	resolver := NewCatalogResolver(catalog, CatalogResolverConfig{})
+	store := NewStoreWithResolver("keep_last", resolver)
 	at := time.Unix(1700000000, 0).UTC()
 	for _, test := range []struct{ id, name string }{{"100", "Gate"}, {"200", "Power"}, {"300", "Wicket"}} {
 		store.ApplyDiscovery(Discovery{
@@ -23,8 +31,8 @@ func TestCommandsListsSyntheticObservationsBeforeAndAfterCacheRestore(t *testing
 		t.Helper()
 		indexBefore := maps.Clone(store.commands)
 		commands := store.Commands()
-		if len(commands) != 6 {
-			t.Fatalf("command listing has %d entries, want 3 physical and 3 synthetic: %#v", len(commands), commands)
+		if len(commands) != 4 {
+			t.Fatalf("command listing has %d entries, want 3 physical and 1 explicitly configured synthetic: %#v", len(commands), commands)
 		}
 		physical := make(map[string]string)
 		synthetic := make(map[string]Command)
@@ -41,12 +49,19 @@ func TestCommandsListsSyntheticObservationsBeforeAndAfterCacheRestore(t *testing
 				physical[command.CommandID] = command.DeviceSlug
 			}
 		}
-		for _, slug := range []string{"gate", "power", "wicket"} {
-			if _, ok := synthetic[slug]; !ok {
-				t.Errorf("synthetic grid_power is missing for %s", slug)
+		if _, ok := synthetic["sia_a0f80d_zone_2"]; !ok {
+			t.Errorf("synthetic grid_power is missing for explicitly configured detector: %#v", synthetic)
+		}
+		for _, slug := range []string{"sia_a0f80d_zone_1", "sia_a0f80d_zone_3"} {
+			if _, ok := synthetic[slug]; ok {
+				t.Errorf("ordinary Transmitter %s exposed synthetic grid_power", slug)
 			}
 		}
-		if !maps.Equal(physical, map[string]string{"100": "gate", "200": "power", "300": "wicket"}) {
+		if !maps.Equal(physical, map[string]string{
+			"100": "sia_a0f80d_zone_1",
+			"200": "sia_a0f80d_zone_2",
+			"300": "sia_a0f80d_zone_3",
+		}) {
 			t.Fatalf("physical command ownership changed: %#v", physical)
 		}
 		if !maps.Equal(indexBefore, store.commands) {
@@ -64,7 +79,7 @@ func TestCommandsListsSyntheticObservationsBeforeAndAfterCacheRestore(t *testing
 	if err := store.Save(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := LoadStore(t.Context(), path, "keep_last", nil)
+	restored, err := LoadStore(t.Context(), path, "keep_last", resolver)
 	if err != nil {
 		t.Fatal(err)
 	}

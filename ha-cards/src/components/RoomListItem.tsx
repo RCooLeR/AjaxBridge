@@ -37,7 +37,7 @@ export function RoomListItem({ room, summary, selected, onSelect }: RoomListItem
         {summary.gridPower && summary.gridPower.known > 0 ? (
           <StatusBadge
             label={summary.gridPower.outage > 0 ? `${summary.gridPower.outage} grid outage` : 'Grid OK'}
-            tone={summary.gridPower.outage > 0 ? 'red' : 'green'}
+            tone={summary.gridPower.outage > 0 ? 'amber' : 'green'}
           />
         ) : null}
         <StatusBadge

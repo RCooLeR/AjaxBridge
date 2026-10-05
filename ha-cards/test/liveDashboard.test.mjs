@@ -302,3 +302,47 @@ test('SIA power-failure is an operational fault, while clear is nominal and temp
   assert.equal(card.tone,'red');
   assert.equal(data.rooms[0].safety.smokeHigh,1);
 });
+
+test('dedicated grid Transmitter outage is informational rather than a critical alert', () => {
+  const {card,data}=fixture([
+    ['binary_sensor.grid_power','off',{device_class:'power',friendly_name:'Grid Power',roles:['grid_power_detector']},{unique_id:'ajaxbridge_jeedom_sia_a0f80d_zone_6_grid_power'}],
+    ['binary_sensor.power_failure','on',{device_class:'problem'},{unique_id:'ajaxbridge_zone_a0f80d_6_signal_power_failure'}],
+    ['binary_sensor.alarm_active','on',{}, {unique_id:'ajaxbridge_zone_a0f80d_6_alarm_active'}],
+    ['binary_sensor.burglary','on',{}, {unique_id:'ajaxbridge_zone_a0f80d_6_signal_burglary'}],
+    ['sensor.last_event_name','Input alarm',{}, {unique_id:'ajaxbridge_zone_a0f80d_6_last_event_name'}],
+    ['sensor.last_event_at','2026-09-24T10:00:00Z',{}, {unique_id:'ajaxbridge_zone_a0f80d_6_last_event_at'}],
+  ],'Transmitter','Grid power detector');
+  assert.equal(card.status,'Grid power off');
+  assert.equal(card.tone,'amber');
+  assert.equal(card.attention,false);
+  assert.ok(card.metrics?.some((metric)=>metric.label==='Grid power'&&metric.value==='Off'));
+  assert.ok(!card.metrics?.some((metric)=>metric.label==='Power alert'||metric.label==='Burglary alert'||metric.label==='Alarm signal'));
+  assert.equal(chip(data,'system-mode').value,'Monitoring');
+  assert.equal(chip(data,'system-alerts'),undefined);
+  assert.equal(chip(data,'system-grid-power').value,'1 outage');
+  assert.equal(chip(data,'system-grid-power').tone,'amber');
+  assert.deepEqual(data.rooms[0].gridPower,{known:1,online:0,outage:1});
+  assert.equal(data.events[0].type,'power_loss');
+  assert.equal(data.events[0].tone,'amber');
+  assert.doesNotMatch(data.events[0].description,/normal state/i);
+});
+
+test('ordinary Transmitter power alarm remains an alert and never becomes grid status', () => {
+  const {card,data}=fixture([
+    ['binary_sensor.stale_grid_power','on',{device_class:'power',friendly_name:'Grid Power'},{unique_id:'ajaxbridge_jeedom_sia_a0f80d_zone_6_grid_power'}],
+    ['binary_sensor.power_failure','on',{device_class:'problem'},{unique_id:'ajaxbridge_zone_a0f80d_6_signal_power_failure'}],
+  ],'Transmitter','Gate contact');
+  assert.notEqual(card.status,'Grid power off');
+  assert.equal(card.attention,true);
+  assert.equal(chip(data,'system-grid-power').value,'Unknown');
+  assert.equal(data.rooms[0].gridPower,undefined);
+});
+
+test('dedicated grid Transmitter reports restored mains as one known source', () => {
+  const {card,data}=fixture([
+    ['binary_sensor.grid_power','on',{device_class:'power',friendly_name:'Grid Power',roles:['grid_power_detector']},{unique_id:'ajaxbridge_jeedom_sia_a0f80d_zone_6_grid_power'}],
+  ],'Transmitter','Grid power detector');
+  assert.equal(card.attention,false);
+  assert.equal(chip(data,'system-grid-power').value,'1/1 OK');
+  assert.deepEqual(data.rooms[0].gridPower,{known:1,online:1,outage:0});
+});
