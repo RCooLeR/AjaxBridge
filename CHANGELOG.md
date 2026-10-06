@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Make Home Assistant grid-input mappings resilient to entity renames by accepting stable entity-registry `unique_id` values, while preserving existing `entity_id` configurations and reporting stale selectors explicitly; hide the grid-power chip when no mapping is configured.
 - Publish a Transmitter's physical-input `M_11_3F` and `M_11_40` events as a generic `input_alarm` binary state, while cleaning up obsolete derived `grid_power` discovery entities during cache migration.
 - Let Home Assistant card configuration decide which `input_alarm` entity represents utility-power availability; other Transmitters retain normal alarm semantics.
 - Keep mapped utility outages informational and outside the Alerts total, and make dashboard summary chips open a per-device or per-category breakdown.

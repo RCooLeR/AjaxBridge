@@ -1,4 +1,4 @@
 type: custom:ajaxbridge-chips-card
 max_chips: 7
 grid_power_alarm_entities:
-  - binary_sensor.detektor_elektrozhivlennia_merezhi_input_alarm
+  - "ajaxbridge_jeedom_sia_<account>_zone_<zone>_input_alarm"

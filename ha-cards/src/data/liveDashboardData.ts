@@ -387,13 +387,16 @@ export function buildDashboardDataFromHomeAssistant(
 ): DashboardData {
   const { areas, areaById, deviceById, devices, entities, entitiesByDeviceId, entitiesByAreaId, resolvedAreaByDeviceId } =
     registryIndex;
+  const gridPowerAlarmSelectors = new Set(
+    gridPowerAlarmEntities.map((selector) => selector.trim()).filter(Boolean),
+  );
   const ajaxDevices = buildAjaxDevices(
     devices,
     entitiesByDeviceId,
     resolvedAreaByDeviceId,
     states,
     accountFilter,
-    new Set(gridPowerAlarmEntities.map((entityId) => entityId.trim()).filter(Boolean)),
+    gridPowerAlarmSelectors,
   );
   const ajaxDeviceIds = new Set(ajaxDevices.map((device) => device.id));
   const dahuaDevices = buildDahuaDevices(
@@ -419,7 +422,7 @@ export function buildDashboardDataFromHomeAssistant(
     .sort(sortRooms);
 
   return {
-    systemState: buildSystemState(states, rooms, resolvedDevices, entities, accountFilter),
+    systemState: buildSystemState(states, rooms, resolvedDevices, entities, accountFilter, gridPowerAlarmSelectors.size),
     rooms,
     devices: resolvedDevices.map(toPublicDevice),
     events: resolvedEvents,
@@ -432,7 +435,7 @@ function buildAjaxDevices(
   resolvedAreaByDeviceId: Map<string, string>,
   states: Record<string, HomeAssistantState>,
   accountFilter?: string,
-  gridPowerAlarmEntities: ReadonlySet<string> = new Set(),
+  gridPowerAlarmSelectors: ReadonlySet<string> = new Set(),
 ): ResolvedDevice[] {
   const output: ResolvedDevice[] = [];
   const groups = new Map<string, { device: HomeAssistantDeviceEntry; entries: HomeAssistantEntityEntry[]; roomId?: string }>();
@@ -462,7 +465,7 @@ function buildAjaxDevices(
     }
 
     const linkedEntities = group.entries;
-    const gridPowerAlarmEntry = linkedEntities.find((entry) => gridPowerAlarmEntities.has(entry.entity_id));
+    const gridPowerAlarmEntry = linkedEntities.find((entry) => matchesEntitySelector(entry, gridPowerAlarmSelectors));
     const operationalEntities = gridPowerAlarmEntry
       ? linkedEntities.filter((entry) => entry.entity_id !== gridPowerAlarmEntry.entity_id)
       : linkedEntities;
@@ -1048,6 +1051,7 @@ function buildSystemState(
   devices: ResolvedDevice[],
   entities: HomeAssistantEntityEntry[] = [],
   accountFilter?: string,
+  configuredGridPowerSelectorCount = 0,
 ): SystemState {
   const alertDevices = devices.filter((device) => device.attention);
   const alertCount = alertDevices.length;
@@ -1119,7 +1123,7 @@ function buildSystemState(
     gridPowerItems.push({
       id: 'grid-power-unconfigured',
       label: 'Configured grid inputs',
-      value: 'None available',
+      value: configuredGridPowerSelectorCount > 0 ? 'No matching HA entity' : 'None configured',
       tone: 'slate',
     });
   }
@@ -1167,7 +1171,7 @@ function buildSystemState(
         items: securityItems,
       },
     },
-    {
+    ...(configuredGridPowerSelectorCount > 0 ? [{
       id: 'system-grid-power',
       label: 'Grid power',
       value: gridPower.known > 0
@@ -1185,7 +1189,7 @@ function buildSystemState(
           : 'Informational mains status from the raw input alarms explicitly mapped in Home Assistant.',
         items: gridPowerItems,
       },
-    },
+    } satisfies DashboardChip] : []),
     {
       id: 'system-smd',
       label: 'SMD today',
@@ -1808,6 +1812,14 @@ function isIgnoredDahuaEntity(
 
   return isVtoLikeDevice(deviceEntry, [entityEntry], state ? { [entityEntry.entity_id]: state } : undefined)
     && looksLikeVtoStreamEntity(entityEntry, state);
+}
+
+function matchesEntitySelector(
+  entityEntry: HomeAssistantEntityEntry,
+  selectors: ReadonlySet<string>,
+): boolean {
+  return selectors.has(entityEntry.entity_id)
+    || (typeof entityEntry.unique_id === 'string' && selectors.has(entityEntry.unique_id));
 }
 
 function isEntityHiddenOrDisabled(entityEntry: HomeAssistantEntityEntry): boolean {
