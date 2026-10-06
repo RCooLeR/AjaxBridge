@@ -208,6 +208,53 @@ test('connectivity faults, explicit off, explicit unknown and unavailable cannot
   assert.equal(card.metrics.find((metric) => metric.label === 'Link').value,'Online');
 });
 
+test('Hub overall online state is authoritative over optional transport channels', () => {
+  const hub = {
+    id:'ha-account',name:'Ajax Hub 2 Plus',model:'Ajax account',manufacturer:'Ajax Systems',area_id:'room',
+    identifiers:[['mqtt','ajaxbridge_account_a0f80d']],
+  };
+  const inputs = [
+    ['binary_sensor.ajax_account_a0f80d_online','on',{device_class:'connectivity'}, {unique_id:'ajaxbridge_account_a0f80d_online'}],
+    ['binary_sensor.ajax_account_a0f80d_gsm','unknown',{device_class:'connectivity',friendly_name:'GSM'}, {unique_id:'ajaxbridge_jeedom_cmd_154'}],
+    ['binary_sensor.ajax_account_a0f80d_ethernet','on',{device_class:'connectivity',friendly_name:'Ethernet'}, {unique_id:'ajaxbridge_jeedom_cmd_155'}],
+    ['button.ajax_account_a0f80d_disarm','unknown',{friendly_name:'Disarm'}, {unique_id:'ajaxbridge_account_a0f80d_disarm'}],
+  ];
+  const {card} = fixture(inputs,'','',[hub]);
+  assert.equal(card.name,'Ajax Hub 2 Plus');
+  assert.equal(card.connectivity,'Online');
+  assert.equal(card.isOnline,true);
+  assert.equal(card.attention,false);
+
+  inputs[0][1] = 'off';
+  const offline = fixture(inputs,'','',[hub]).card;
+  assert.equal(offline.connectivity,'Offline');
+  assert.equal(offline.isOnline,false);
+  assert.equal(offline.attention,true);
+
+  inputs[0][1] = 'on';
+  inputs.push(['binary_sensor.ajax_account_a0f80d_signal_connectivity','on',{}, {unique_id:'ajaxbridge_account_a0f80d_signal_connectivity'}]);
+  const faulted = fixture(inputs,'','',[hub]).card;
+  assert.equal(faulted.connectivity,'Offline');
+  assert.equal(faulted.isOnline,false);
+  assert.equal(faulted.attention,true);
+});
+
+test('redundant connectivity channels stay online when any known channel is connected', () => {
+  const connected = fixture([
+    ['binary_sensor.detector_ethernet','on',{device_class:'connectivity'}],
+    ['binary_sensor.detector_gsm','unknown',{device_class:'connectivity'}],
+  ]).card;
+  assert.equal(connected.connectivity,'Online');
+  assert.equal(connected.isOnline,true);
+
+  const uncertain = fixture([
+    ['binary_sensor.detector_ethernet','off',{device_class:'connectivity'}],
+    ['binary_sensor.detector_gsm','unknown',{device_class:'connectivity'}],
+  ]).card;
+  assert.equal(uncertain.connectivity,'Unknown');
+  assert.equal(uncertain.isOnline,false);
+});
+
 test('operational on/open/online and missing historical events are not faults', () => {
   for (const [model, inputs] of [
     ['WallSwitch',[['switch.pump','on'],['sensor.last_event_time','unknown']]],

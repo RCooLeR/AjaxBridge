@@ -43,7 +43,11 @@ export function ajaxEntitySemantic(entry: { entity_id: string; unique_id?: strin
   }
   if (entry.entity_id.startsWith('binary_sensor.')) {
     const deviceClass = text(attributes.device_class).toLowerCase();
-    const binarySemantics: Record<string, string> = { smoke: 'signal_smoke', gas: 'signal_gas', moisture: 'signal_water_leak', tamper: 'tamper_active', problem: 'trouble_active', battery: 'battery_percent', connectivity: 'connectivity' };
+    // A connectivity device class alone does not say whether an entity is the
+    // overall device status or one optional transport channel. Name/identity
+    // aliases above identify authoritative online entities; health resolution
+    // handles the remaining connectivity-class entities as channel fallbacks.
+    const binarySemantics: Record<string, string> = { smoke: 'signal_smoke', gas: 'signal_gas', moisture: 'signal_water_leak', tamper: 'tamper_active', problem: 'trouble_active', battery: 'battery_percent' };
     return binarySemantics[deviceClass] ?? null;
   }
   if (entry.entity_id.startsWith('sensor.') && text(attributes.device_class).toLowerCase() === 'battery') return 'battery_percent';
@@ -54,6 +58,7 @@ function canonicalSemantic(value: string): string {
   if (value === 'input_alarm') return 'alarm_active';
   if (value === 'signal_power_failure') return 'signal_power';
   if (value === 'signal_temperature_alarm') return 'signal_temperature';
+  if (ALIASES.connectivity.includes(value)) return 'connectivity';
   return value;
 }
 
@@ -90,11 +95,24 @@ export function diagnosticHealth(kind: string, raw: string, binary = false): { i
 
 export interface HealthObservation { semantic: string | null; domain: string; value: string; deviceClass: string }
 export function ajaxDeviceHealth(observations: HealthObservation[], activeSignals: string[]): { online: boolean; connectivity: string; warning: string; severity: number } {
-  const connectivity = observations.filter((item) => item.semantic === 'connectivity' || (item.deviceClass === 'connectivity' && item.semantic !== 'signal_connectivity'));
+  const explicitConnectivity = observations.filter((item) => item.semantic === 'connectivity');
+  const inferredConnectivity = observations.filter((item) => item.deviceClass === 'connectivity' && item.semantic !== 'signal_connectivity' && item.semantic !== 'connectivity');
+  // An explicit overall online/connected entity is authoritative. Transport
+  // channels such as GSM, Ethernet and CMS may legitimately be unavailable or
+  // disconnected while the Hub remains reachable through another channel.
+  const connectivity = explicitConnectivity.length > 0 ? explicitConnectivity : inferredConnectivity;
   const faultLinks = observations.filter((item) => item.semantic === 'signal_connectivity');
   const unknown = (value: string) => ['', 'unknown', 'unavailable', 'offline', 'none', 'null'].includes(value.trim().toLowerCase());
-  const linkUnknown = [...connectivity, ...faultLinks].some((item) => unknown(item.value));
-  const explicitOffline = activeSignals.includes('connectivity') || connectivity.some((item) => ['off', 'false', '0', 'offline', 'disconnected'].includes(item.value.toLowerCase()));
+  const connected = (value: string) => ['on', 'true', '1', 'online', 'connected', 'available'].includes(value.trim().toLowerCase());
+  const disconnected = (value: string) => ['off', 'false', '0', 'offline', 'disconnected'].includes(value.trim().toLowerCase());
+  const linkUnknown = explicitConnectivity.length > 0
+    ? connectivity.some((item) => unknown(item.value))
+    : connectivity.length > 0
+      ? !connectivity.some((item) => connected(item.value)) && connectivity.some((item) => unknown(item.value))
+      : faultLinks.some((item) => unknown(item.value));
+  const explicitOffline = activeSignals.includes('connectivity') || (explicitConnectivity.length > 0
+    ? connectivity.some((item) => disconnected(item.value))
+    : connectivity.length > 0 && connectivity.every((item) => disconnected(item.value)));
   const current = observations.filter((item) => item.domain !== 'button' && !['last_event_name', 'last_event_at', 'last_signal', 'alarm_signal'].includes(item.semantic ?? ''));
   const noCurrentState = current.length > 0 && current.every((item) => unknown(item.value));
   if (explicitOffline) return { online: false, connectivity: 'Offline', warning: 'Connectivity issue', severity: 3 };
