@@ -1,4 +1,5 @@
 type: custom:ajaxbridge-chips-card
 max_chips: 7
+dahua_base: https://ha.example.test/dahua-bridge
 grid_power_alarm_entities:
   - "ajaxbridge_jeedom_sia_<account>_zone_<zone>_input_alarm"

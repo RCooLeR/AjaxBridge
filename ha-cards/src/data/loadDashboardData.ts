@@ -32,6 +32,10 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
   const outletOnCount = outlets.filter(deviceLooksOn).length;
   const lightOnCount = lights.filter(deviceLooksOn).length;
   const alerts = devices.filter((device) => device.attention).length;
+  const hasAnalyticsSources = smdIvsTotals.total > 0
+    || fallbackSmdCount > 0
+    || fallbackIvsCount > 0
+    || rooms.some((room) => (room.dahuaCameraCount ?? 0) > 0);
   const staticSwitchItems = (items: Device[]): DashboardChipDetailItem[] => items.length > 0
     ? items.map((device) => ({
       id: `device:${device.id}`,
@@ -40,8 +44,8 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
       tone: deviceLooksOn(device) ? 'green' : 'slate',
     }))
     : [{ id: 'none-discovered', label: 'Discovered devices', value: 'None', tone: 'slate' }];
-  const chips = [
-    {
+  const chips: SystemState['chips'] = [
+    ...staticChipWhen(devices.length > 0, {
       id: 'system-mode',
       label: 'Security mode',
       value: 'Armed',
@@ -53,8 +57,8 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
         summary: 'Current Ajax security arming state. Device warnings are listed separately under Alerts.',
         items: [{ id: 'security-state', label: 'Current state', value: 'Armed', tone: 'green' }],
       },
-    },
-    {
+    }),
+    ...staticChipWhen(hasAnalyticsSources, {
       id: 'system-smd',
       label: 'SMD today',
       value: String(smdIvsTotals.human + smdIvsTotals.vehicle + smdIvsTotals.animal || fallbackSmdCount),
@@ -70,8 +74,8 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
           { id: 'smd-animal', label: 'Animals', value: String(shownAnimalCount), tone: shownAnimalCount > 0 ? 'violet' : 'slate' },
         ],
       },
-    },
-    {
+    }),
+    ...staticChipWhen(hasAnalyticsSources, {
       id: 'system-ivs',
       label: 'IVS today',
       value: String(shownIvsCount),
@@ -83,8 +87,8 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
         summary: 'Tripwire and intrusion events reported by camera IVS analytics.',
         items: [{ id: 'ivs-total', label: 'Tripwire / intrusion events', value: String(shownIvsCount), tone: shownIvsCount > 0 ? 'amber' : 'slate' }],
       },
-    },
-    {
+    }),
+    ...staticChipWhen(outlets.length > 0, {
       id: 'system-outlets',
       label: 'Outlets',
       value: `${outletOnCount}/${outlets.length || 0}`,
@@ -96,8 +100,8 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
         summary: 'The first number is outlets currently on; the second is every Ajax Socket or WallSwitch counted by this card.',
         items: staticSwitchItems(outlets),
       },
-    },
-    {
+    }),
+    ...staticChipWhen(lights.length > 0, {
       id: 'system-lights',
       label: 'Light switches',
       value: `${lightOnCount}/${lights.length || 0}`,
@@ -109,28 +113,36 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
         summary: 'The first number is light switches currently on; the second is every light switch counted by this card.',
         items: staticSwitchItems(lights),
       },
-    },
-  ] as SystemState['chips'];
+    }),
+  ];
 
-  if (alerts > 0) {
+  if (devices.length > 0) {
     chips.push({
       id: 'system-alerts',
       label: 'Alerts',
       value: String(alerts),
       icon: { category: 'misc', key: 'alert' },
-      tone: 'amber',
-      active: true,
+      tone: alerts > 0 ? 'amber' : 'green',
+      active: alerts > 0,
       details: {
         title: 'Devices needing attention',
-        summary: 'Current device faults, security alarms, offline devices, or unknown control states. Informational grid outages are excluded.',
-        items: devices
-          .filter((device) => device.attention)
-          .map((device) => ({ id: `device:${device.id}`, label: device.name, value: device.status, tone: device.tone })),
+        summary: alerts > 0
+          ? 'Current device faults, security alarms, offline devices, or unknown control states. Informational grid outages are excluded.'
+          : 'No current device faults, security alarms, offline devices, or unknown control states.',
+        items: alerts > 0
+          ? devices
+            .filter((device) => device.attention)
+            .map((device) => ({ id: `device:${device.id}`, label: device.name, value: device.status, tone: device.tone }))
+          : [{ id: 'alerts-clear', label: 'Current state', value: 'No active alerts', tone: 'green' }],
       },
     });
   }
 
   return { chips };
+}
+
+function staticChipWhen(enabled: boolean, chip: SystemState['chips'][number]): SystemState['chips'] {
+  return enabled ? [chip] : [];
 }
 
 export function getDefaultRoomId(data: DashboardData): string {

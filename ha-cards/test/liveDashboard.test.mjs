@@ -47,6 +47,7 @@ function fixture(
   devices = [device('6', model, name)],
   gridPowerAlarmEntities = [],
   roomSmdIvsCounts = {},
+  dahuaAnalyticsConfigured = false,
 ) {
   const states = {};
   const entities = inputs.map(([entity_id, value, attributes = {}, metadata = {}]) => {
@@ -54,7 +55,14 @@ function fixture(
     return { entity_id, device_id: devices[0].id, original_name: attributes.friendly_name, ...metadata };
   });
   const registry = { areas: [{area_id: 'room', name: 'Room'}], devices, entities };
-  const data = buildDashboardDataFromHomeAssistant(states, buildRegistryIndex(registry), undefined, roomSmdIvsCounts, gridPowerAlarmEntities);
+  const data = buildDashboardDataFromHomeAssistant(
+    states,
+    buildRegistryIndex(registry),
+    undefined,
+    roomSmdIvsCounts,
+    gridPowerAlarmEntities,
+    dahuaAnalyticsConfigured,
+  );
   return { data, states, registry, card: data.devices[0] };
 }
 const chip = (data, id) => data.systemState.chips.find((entry) => entry.id === id);
@@ -176,7 +184,7 @@ test('low numeric battery, positive issues and failed battery check share card/g
     assert.equal(card.attention, true, entity);
     assert.equal(card.tone, 'amber');
     assert.equal(chip(data,'system-alerts').value,'1');
-    assert.equal(chip(data,'system-mode').value,'Monitoring');
+    assert.equal(chip(data,'system-mode'),undefined);
     assert.ok(card.metrics.some((metric) => metric.tone === 'amber'));
   }
   for (const value of ['21', '90', '100']) assert.equal(fixture([['sensor.battery',value,{device_class:'battery'}]]).card.attention, false);
@@ -193,7 +201,7 @@ test('connectivity faults, explicit off, explicit unknown and unavailable cannot
     assert.equal(card.isOnline,false,input[0]);
     assert.equal(card.attention,true);
     assert.notEqual(card.status,'Nominal');
-    assert.equal(chip(data,'system-mode').value,'Monitoring');
+    assert.notEqual(chip(data,'system-mode')?.value,'Monitoring');
   }
   const {card} = fixture([['binary_sensor.detector_signal_connectivity_42','off']]);
   assert.equal(card.isOnline,true);
@@ -208,7 +216,7 @@ test('operational on/open/online and missing historical events are not faults', 
   ]) {
     const {card,data} = fixture(inputs,model);
     assert.equal(card.attention,false,model);
-    assert.equal(chip(data,'system-alerts'),undefined);
+    assert.equal(chip(data,'system-alerts').value,'0');
   }
 });
 
@@ -244,6 +252,73 @@ test('summary chip details explain analytics totals and per-room counts', () => 
   assert.deepEqual(ivs.details.items.map((item)=>[item.label,item.value]),[['Room','2']]);
 });
 
+test('summary chips render only when their backing source is configured or discovered', () => {
+  const empty = fixture([], 'MotionProtect', 'Detector').data;
+  assert.equal(chip(empty,'system-mode'),undefined);
+  assert.equal(chip(empty,'system-smd'),undefined);
+  assert.equal(chip(empty,'system-ivs'),undefined);
+  assert.equal(chip(empty,'system-outlets'),undefined);
+  assert.equal(chip(empty,'system-lights'),undefined);
+  assert.equal(chip(empty,'system-alerts'),undefined);
+
+  const motion = fixture([
+    ['sensor.detector_battery','100',{device_class:'battery'}],
+  ],'MotionProtect').data;
+  assert.equal(chip(motion,'system-mode'),undefined);
+  assert.equal(chip(motion,'system-smd'),undefined);
+  assert.equal(chip(motion,'system-ivs'),undefined);
+  assert.equal(chip(motion,'system-outlets'),undefined);
+  assert.equal(chip(motion,'system-lights'),undefined);
+  assert.equal(chip(motion,'system-alerts').value,'0');
+
+  const wallSwitch = fixture([['switch.pump','off']],'WallSwitch','Pump').data;
+  assert.equal(chip(wallSwitch,'system-outlets').value,'0/1');
+  assert.equal(chip(wallSwitch,'system-lights'),undefined);
+
+  const dahuaCamera = {
+    id:'dahua-camera',name:'Front camera',model:'IPC',manufacturer:'Dahua',area_id:'room',identifiers:[['dahua','channel_1']],
+  };
+  const cameraOnly = fixture([['camera.front','streaming']], '', '', [dahuaCamera]).data;
+  assert.equal(chip(cameraOnly,'system-mode'),undefined);
+  assert.equal(chip(cameraOnly,'system-smd'),undefined);
+  assert.equal(chip(cameraOnly,'system-ivs'),undefined);
+  assert.equal(chip(cameraOnly,'system-alerts').value,'0');
+
+  const analytics = fixture([['camera.front','streaming']], '', '', [dahuaCamera], [], {}, true).data;
+  assert.equal(chip(analytics,'system-smd').value,'0');
+  assert.equal(chip(analytics,'system-ivs').value,'0');
+});
+
+test('security mode requires a live account state and represents unavailable values as unknown', () => {
+  const modeEntity = {
+    entity_id:'select.ajax_mode',device_id:'ha-account',unique_id:'ajaxbridge_account_a0f80d_mode',original_name:'Mode',
+  };
+  const registry = buildRegistryIndex({
+    areas:[{area_id:'room',name:'Room'}],
+    devices:[{
+      id:'ha-account',name:'Ajax account',model:'Hub',manufacturer:'Ajax Systems',area_id:'room',
+      identifiers:[['mqtt','ajaxbridge_account_a0f80d']],
+    }],
+    entities:[modeEntity],
+  });
+  const missing = buildDashboardDataFromHomeAssistant({}, registry);
+  assert.equal(chip(missing,'system-mode'),undefined);
+
+  for (const state of ['unknown','unavailable']) {
+    const data = buildDashboardDataFromHomeAssistant({
+      [modeEntity.entity_id]:{entity_id:modeEntity.entity_id,state,attributes:{}},
+    },registry);
+    const security = chip(data,'system-mode');
+    assert.equal(security.value,'Unknown');
+    assert.equal(security.tone,'slate');
+    assert.equal(security.active,false);
+    assert.deepEqual(
+      security.details.items.map((item)=>[item.label,item.value,item.tone]),
+      [['Mode','Unknown','slate']],
+    );
+  }
+});
+
 test('unknown WallSwitch and intermediate/moving/unknown WaterStop disable both UI surfaces and dispatch', async () => {
   for (const [model,inputs] of [
     ['WallSwitch',[['switch.pump','unknown']]],
@@ -257,7 +332,7 @@ test('unknown WallSwitch and intermediate/moving/unknown WaterStop disable both 
     if (model === 'WallSwitch') {
       assert.ok(chip(data,'system-outlets').details.items.some((item)=>item.label==='Detector'&&item.value==='Unknown'));
     }
-    assert.equal(chip(fixture(inputs,model).data,'system-mode').value,'Monitoring');
+    assert.equal(chip(fixture(inputs,model).data,'system-mode'),undefined);
     let calls=0;
     const hass={states,callService:async()=>{calls++;}};
     await assert.rejects(callDeviceAction(hass,card,action),/known device state|Control unavailable/);
@@ -326,7 +401,7 @@ test('SIA power-failure is an operational fault, while clear is nominal and temp
   for (const value of ['off','on']) {
     const {card,data}=fixture([['binary_sensor.power_failure_50',value,{}, {unique_id:'ajaxbridge_zone_a0f80d_6_signal_power_failure'}]]);
     assert.equal(card.attention,value==='on');
-    assert.equal(chip(data,'system-mode').value,'Monitoring');
+    assert.equal(chip(data,'system-mode'),undefined);
     if (value==='off') assert.ok(!card.metrics?.some((metric)=>metric.tone==='amber'));
   }
   const {card,data}=fixture([['binary_sensor.temperature_alarm_55','on',{}, {unique_id:'ajaxbridge_zone_a0f80d_6_signal_temperature_alarm'}]],'FireProtect');
@@ -345,8 +420,8 @@ test('HA unique-id-mapped Transmitter input alarm survives an entity-id rename',
   assert.equal(card.attention,false);
   assert.ok(card.metrics?.some((metric)=>metric.label==='Grid power'&&metric.value==='Off'));
   assert.ok(!card.metrics?.some((metric)=>metric.label==='Safety'||metric.label==='Alarm signal'));
-  assert.equal(chip(data,'system-mode').value,'Monitoring');
-  assert.equal(chip(data,'system-alerts'),undefined);
+  assert.equal(chip(data,'system-mode'),undefined);
+  assert.equal(chip(data,'system-alerts').value,'0');
   assert.equal(chip(data,'system-grid-power').value,'1 outage');
   assert.equal(chip(data,'system-grid-power').tone,'amber');
   assert.match(chip(data,'system-grid-power').details.summary,/informational/i);

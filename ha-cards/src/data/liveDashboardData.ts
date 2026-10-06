@@ -342,8 +342,9 @@ export function useDashboardData(
       account,
       roomSmdIvsCounts,
       gridPowerAlarmEntities,
+      Boolean(smdIvsSignature),
     );
-  }, [account, gridPowerAlarmEntities, hass, registryIndex, roomSmdIvsCounts]);
+  }, [account, gridPowerAlarmEntities, hass, registryIndex, roomSmdIvsCounts, smdIvsSignature]);
 
   return dashboardData;
 }
@@ -384,6 +385,7 @@ export function buildDashboardDataFromHomeAssistant(
   accountFilter?: string,
   roomSmdIvsCounts: RoomSmdIvsCountsByRoom = {},
   gridPowerAlarmEntities: readonly string[] = [],
+  dahuaAnalyticsConfigured = false,
 ): DashboardData {
   const { areas, areaById, deviceById, devices, entities, entitiesByDeviceId, entitiesByAreaId, resolvedAreaByDeviceId } =
     registryIndex;
@@ -422,7 +424,15 @@ export function buildDashboardDataFromHomeAssistant(
     .sort(sortRooms);
 
   return {
-    systemState: buildSystemState(states, rooms, resolvedDevices, entities, accountFilter, gridPowerAlarmSelectors.size),
+    systemState: buildSystemState(
+      states,
+      rooms,
+      resolvedDevices,
+      entities,
+      accountFilter,
+      gridPowerAlarmSelectors.size,
+      dahuaAnalyticsConfigured || Object.keys(roomSmdIvsCounts).length > 0,
+    ),
     rooms,
     devices: resolvedDevices.map(toPublicDevice),
     events: resolvedEvents,
@@ -1052,6 +1062,7 @@ function buildSystemState(
   entities: HomeAssistantEntityEntry[] = [],
   accountFilter?: string,
   configuredGridPowerSelectorCount = 0,
+  dahuaAnalyticsConfigured = false,
 ): SystemState {
   const alertDevices = devices.filter((device) => device.attention);
   const alertCount = alertDevices.length;
@@ -1075,17 +1086,31 @@ function buildSystemState(
   });
   const accountModeSources = accountEntities
     .filter((entry) => ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes) === 'mode')
-    .map((entry) => ({
-      entry,
-      state: states[entry.entity_id],
-      mode: safeString(states[entry.entity_id]?.state),
-    }));
+    .flatMap((entry) => {
+      const state = states[entry.entity_id];
+      if (!state) {
+        return [];
+      }
+      const mode = safeString(state.state).toLowerCase();
+      return [{
+        entry,
+        state,
+        mode: ['', 'unknown', 'unavailable', 'none', 'null'].includes(mode) ? '' : mode,
+      }];
+    });
   const accountModes = accountModeSources.map(({ mode }) => mode).filter(Boolean);
   const alarmActive = accountEntities.some(
     (entry) => ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes) === 'alarm_active' && isOn(states[entry.entity_id]),
   ) || devices.some((device) => device.securityAlarm);
   const armed = accountModes.some((mode) => mode === 'armed' || mode === 'night');
-  const primaryMode = alarmActive ? 'Alarm' : accountModes[0] ? humanizeSlug(accountModes[0]) : 'Monitoring';
+  const securityModeUnknown = !alarmActive && accountModeSources.length > 0 && accountModes.length === 0;
+  const primaryMode = alarmActive
+    ? 'Alarm'
+    : accountModes[0]
+      ? humanizeSlug(accountModes[0])
+      : securityModeUnknown
+        ? 'Unknown'
+        : 'Monitoring';
   const securityAlarmDevices = devices.filter((device) => device.securityAlarm);
   const securityItems: DashboardChipDetailItem[] = [
     ...accountModeSources.map(({ entry, state, mode }) => ({
@@ -1155,14 +1180,15 @@ function buildSystemState(
     : [{ id: 'ivs-total', label: 'Tripwire / intrusion events', value: String(smdIvsTotals.ivs), tone: 'slate' as GlowTone }];
   const outletItems = buildSwitchChipDetailItems(outletDevices);
   const lightSwitchItems = buildSwitchChipDetailItems(lightSwitchDevices);
+  const hasSecurityModeSource = accountModeSources.length > 0 || alarmActive;
   const chips: DashboardChip[] = [
-    {
+    ...chipWhen(hasSecurityModeSource, {
       id: 'system-mode',
       label: 'Security mode',
       value: primaryMode,
-      icon: { category: 'system-states', key: alarmActive ? 'alarm_active' : armed ? 'armed' : 'disarmed' },
-      tone: alarmActive ? 'red' : armed ? 'amber' : 'green',
-      active: true,
+      icon: { category: 'system-states', key: alarmActive ? 'alarm_active' : armed ? 'armed' : securityModeUnknown ? 'trouble' : 'disarmed' },
+      tone: alarmActive ? 'red' : armed ? 'amber' : securityModeUnknown ? 'slate' : 'green',
+      active: !securityModeUnknown,
       details: {
         title: 'Security mode',
         summary: alarmActive
@@ -1170,8 +1196,8 @@ function buildSystemState(
           : 'Current Ajax account arming state. Device warnings are listed separately under Alerts.',
         items: securityItems,
       },
-    },
-    ...(configuredGridPowerSelectorCount > 0 ? [{
+    }),
+    ...chipWhen(configuredGridPowerSelectorCount > 0, {
       id: 'system-grid-power',
       label: 'Grid power',
       value: gridPower.known > 0
@@ -1189,8 +1215,8 @@ function buildSystemState(
           : 'Informational mains status from the raw input alarms explicitly mapped in Home Assistant.',
         items: gridPowerItems,
       },
-    } satisfies DashboardChip] : []),
-    {
+    }),
+    ...chipWhen(dahuaAnalyticsConfigured, {
       id: 'system-smd',
       label: 'SMD today',
       value: String(smdTotal),
@@ -1202,8 +1228,8 @@ function buildSystemState(
         summary: 'The total is people + vehicles + animals reported by SMD analytics. Room rows show where those events were counted.',
         items: smdItems,
       },
-    },
-    {
+    }),
+    ...chipWhen(dahuaAnalyticsConfigured, {
       id: 'system-ivs',
       label: 'IVS today',
       value: String(smdIvsTotals.ivs),
@@ -1215,8 +1241,8 @@ function buildSystemState(
         summary: 'Tripwire and intrusion events reported by camera IVS analytics, grouped by Home Assistant room.',
         items: ivsItems,
       },
-    },
-    {
+    }),
+    ...chipWhen(outletDevices.length > 0, {
       id: 'system-outlets',
       label: 'Outlets',
       value: `${outletOnCount}/${outletDevices.length || 0}`,
@@ -1228,8 +1254,8 @@ function buildSystemState(
         summary: 'The first number is outlets currently on; the second is every Ajax Socket or WallSwitch counted by this card.',
         items: outletItems,
       },
-    },
-    {
+    }),
+    ...chipWhen(lightSwitchDevices.length > 0, {
       id: 'system-lights',
       label: 'Light switches',
       value: `${lightSwitchOnCount}/${lightSwitchDevices.length || 0}`,
@@ -1241,31 +1267,39 @@ function buildSystemState(
         summary: 'The first number is light switches currently on; the second is every light switch counted by this card.',
         items: lightSwitchItems,
       },
-    },
+    }),
   ];
 
-  if (alertCount > 0) {
+  if (devices.length > 0) {
     chips.push({
       id: 'system-alerts',
       label: 'Alerts',
       value: String(alertCount),
       icon: { category: 'misc', key: 'alert' },
-      tone: 'amber',
-      active: true,
+      tone: alertCount > 0 ? 'amber' : 'green',
+      active: alertCount > 0,
       details: {
         title: 'Devices needing attention',
-        summary: 'Current device faults, security alarms, offline devices, or unknown control states. Informational grid outages are excluded.',
-        items: alertDevices.map((device) => ({
-          id: `device:${device.id}`,
-          label: device.name,
-          value: device.status,
-          tone: device.tone,
-        })),
+        summary: alertCount > 0
+          ? 'Current device faults, security alarms, offline devices, or unknown control states. Informational grid outages are excluded.'
+          : 'No current device faults, security alarms, offline devices, or unknown control states.',
+        items: alertCount > 0
+          ? alertDevices.map((device) => ({
+            id: `device:${device.id}`,
+            label: device.name,
+            value: device.status,
+            tone: device.tone,
+          }))
+          : [{ id: 'alerts-clear', label: 'Current state', value: 'No active alerts', tone: 'green' }],
       },
     });
   }
 
   return { chips };
+}
+
+function chipWhen(enabled: boolean, chip: DashboardChip): DashboardChip[] {
+  return enabled ? [chip] : [];
 }
 
 function roomSmdCount(room: Room): number {
