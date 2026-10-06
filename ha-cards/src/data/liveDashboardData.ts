@@ -154,6 +154,7 @@ interface AjaxDeviceMetricContext {
   tamperActive: boolean;
   troubleActive: boolean;
   activeSignals: string[];
+  connectivity?: string;
 }
 
 interface DeviceMetricOptions {
@@ -504,12 +505,16 @@ function buildAjaxDevices(
       .filter(({ entry }) => isOn(states[entry.entity_id]))
       .map(({ semantic }) => semantic?.slice('signal_'.length) ?? null)
       .filter((signal): signal is string => signal !== null);
-    const health = ajaxDeviceHealth(operationalEntities.map((entry) => ({
+    const healthObservations = operationalEntities.map((entry) => ({
       semantic: ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes),
       domain: entityDomain(entry.entity_id),
       value: states[entry.entity_id]?.state ?? 'unknown',
       deviceClass: safeString(states[entry.entity_id]?.attributes.device_class).toLowerCase(),
-    })), activeSignals);
+    }));
+    const health = ajaxDeviceHealth(healthObservations, activeSignals);
+    const hasConnectivityObservation = healthObservations.some((item) => item.semantic === 'connectivity'
+      || item.semantic === 'signal_connectivity'
+      || item.deviceClass === 'connectivity');
 
     const offline = !health.online;
     const sourceLabel = displayName(deviceEntry, linkedEntities, states);
@@ -567,6 +572,7 @@ function buildAjaxDevices(
         tamperActive,
         troubleActive,
         activeSignals,
+        connectivity: hasConnectivityObservation ? health.connectivity : undefined,
       },
       {
         calculateApparentPower: type === 'wall_switch',
@@ -2290,6 +2296,24 @@ function ajaxContextMetrics(context: AjaxDeviceMetricContext): MetricCandidate[]
   const lastSignal = safeString(context.lastSignal);
   const alarmSignal = safeString(context.alarmSignal);
   const lastEventName = safeString(context.lastEventName);
+
+  if (context.connectivity) {
+    const online = context.connectivity === 'Online';
+    const offline = context.connectivity === 'Offline';
+    metrics.push({
+      id: 'metric:connectivity:aggregate',
+      kind: 'connectivity',
+      label: 'Link',
+      value: context.connectivity,
+      icon: online
+        ? { category: 'system-states', key: 'online' }
+        : offline
+          ? { category: 'system-states', key: 'offline' }
+          : { category: 'misc', key: 'info' },
+      tone: online ? 'green' : offline ? 'red' : 'slate',
+      priority: 9,
+    });
+  }
 
   if (context.alarmActive && alarmSignal && alarmSignal !== 'none') {
     metrics.push({

@@ -2,6 +2,7 @@ import type { GlowTone } from '../models/dashboard';
 
 const SIGNALS = new Set(['alarm', 'burglary', 'panic', 'duress', 'emergency', 'medical', 'hold_up', 'fire', 'smoke', 'co', 'gas', 'gas_or_co', 'water_leak', 'leak', 'flood', 'tamper', 'connectivity', 'battery', 'power', 'hardware', 'interference', 'accelerometer', 'fire_detector', 'configuration', 'firmware', 'supervision', 'button', 'arming', 'night_mode', 'temperature']);
 export const SECURITY_SIGNALS = new Set(['alarm', 'burglary', 'panic', 'duress', 'emergency', 'medical', 'hold_up', 'fire', 'smoke', 'co', 'gas', 'gas_or_co', 'water_leak', 'leak', 'flood', 'tamper', 'temperature']);
+const CONNECTIVITY_CHANNEL = /(?:^|_)(?:gsm|cms|ethernet|cellular|mobile|radio|photo_channel|jeweller|wings|lan|wi_?fi|cloud)(?:_|$)/;
 const ALIASES: Record<string, string[]> = {
   alarm_active: ['alarm_active', 'input_alarm', 'alarm', 'alarme', 'тривога'],
   tamper_active: ['tamper_active', 'tamper', 'sabotage', 'саботаж'],
@@ -36,7 +37,9 @@ export function ajaxEntitySemantic(entry: { entity_id: string; unique_id?: strin
     const signal = descriptor.match(/(?:^|_)signal_(.+)$/)?.[1];
     if (signal && SIGNALS.has(canonicalSemantic(`signal_${signal}`).slice(7))) return canonicalSemantic(`signal_${signal}`);
     for (const [semantic, aliases] of Object.entries(ALIASES)) {
-      if (aliases.some((alias) => descriptor === alias || descriptor.endsWith(`_${alias}`))) return semantic;
+      if (aliases.some((alias) => descriptor === alias || descriptor.endsWith(`_${alias}`))) {
+        return semantic === 'connectivity' && CONNECTIVITY_CHANNEL.test(descriptor) ? 'connectivity_channel' : semantic;
+      }
     }
     // Old discoveries used translated display names for physical-input signals.
     if (['panic', 'panique', 'паніка'].some((alias) => descriptor === alias || descriptor.endsWith(`_${alias}`))) return 'signal_panic';

@@ -217,6 +217,8 @@ test('Hub overall online state is authoritative over optional transport channels
     ['binary_sensor.ajax_account_a0f80d_online','on',{device_class:'connectivity'}, {unique_id:'ajaxbridge_account_a0f80d_online'}],
     ['binary_sensor.ajax_account_a0f80d_gsm','unknown',{device_class:'connectivity',friendly_name:'GSM'}, {unique_id:'ajaxbridge_jeedom_cmd_154'}],
     ['binary_sensor.ajax_account_a0f80d_ethernet','on',{device_class:'connectivity',friendly_name:'Ethernet'}, {unique_id:'ajaxbridge_jeedom_cmd_155'}],
+    ['binary_sensor.ajax_account_a0f80d_ethernet_connected','off',{device_class:'connectivity',friendly_name:'Ethernet connected'}, {unique_id:'ajaxbridge_jeedom_cmd_156'}],
+    ['binary_sensor.ajax_account_a0f80d_radio_connection','unknown',{device_class:'connectivity',friendly_name:'Radio connection'}, {unique_id:'ajaxbridge_jeedom_cmd_157'}],
     ['button.ajax_account_a0f80d_disarm','unknown',{friendly_name:'Disarm'}, {unique_id:'ajaxbridge_account_a0f80d_disarm'}],
   ];
   const {card} = fixture(inputs,'','',[hub]);
@@ -224,12 +226,15 @@ test('Hub overall online state is authoritative over optional transport channels
   assert.equal(card.connectivity,'Online');
   assert.equal(card.isOnline,true);
   assert.equal(card.attention,false);
+  assert.equal(card.metrics.find((metric) => metric.label === 'Link').value,'Online');
+  assert.equal(card.metrics.find((metric) => metric.label === 'Link').tone,'green');
 
   inputs[0][1] = 'off';
   const offline = fixture(inputs,'','',[hub]).card;
   assert.equal(offline.connectivity,'Offline');
   assert.equal(offline.isOnline,false);
   assert.equal(offline.attention,true);
+  assert.equal(offline.metrics.find((metric) => metric.label === 'Link').value,'Offline');
 
   inputs[0][1] = 'on';
   inputs.push(['binary_sensor.ajax_account_a0f80d_signal_connectivity','on',{}, {unique_id:'ajaxbridge_account_a0f80d_signal_connectivity'}]);
@@ -237,22 +242,49 @@ test('Hub overall online state is authoritative over optional transport channels
   assert.equal(faulted.connectivity,'Offline');
   assert.equal(faulted.isOnline,false);
   assert.equal(faulted.attention,true);
+  assert.equal(faulted.metrics.find((metric) => metric.label === 'Link').value,'Offline');
+
+  inputs[0][1] = 'unknown';
+  inputs.pop();
+  inputs[2][1] = 'on';
+  const unknown = fixture(inputs,'','',[hub]).card;
+  assert.equal(unknown.connectivity,'Unknown');
+  assert.equal(unknown.isOnline,false);
+  assert.equal(unknown.metrics.find((metric) => metric.label === 'Link').value,'Unknown');
 });
 
 test('redundant connectivity channels stay online when any known channel is connected', () => {
   const connected = fixture([
-    ['binary_sensor.detector_ethernet','on',{device_class:'connectivity'}],
-    ['binary_sensor.detector_gsm','unknown',{device_class:'connectivity'}],
+    ['binary_sensor.detector_ethernet_connected','on',{device_class:'connectivity'}],
+    ['binary_sensor.detector_radio_connection','unknown',{device_class:'connectivity'}],
   ]).card;
   assert.equal(connected.connectivity,'Online');
   assert.equal(connected.isOnline,true);
+  assert.equal(connected.metrics.find((metric) => metric.label === 'Link').value,'Online');
 
   const uncertain = fixture([
-    ['binary_sensor.detector_ethernet','off',{device_class:'connectivity'}],
-    ['binary_sensor.detector_gsm','unknown',{device_class:'connectivity'}],
+    ['binary_sensor.detector_ethernet_connected','off',{device_class:'connectivity'}],
+    ['binary_sensor.detector_radio_connection','unknown',{device_class:'connectivity'}],
   ]).card;
   assert.equal(uncertain.connectivity,'Unknown');
   assert.equal(uncertain.isOnline,false);
+  assert.equal(uncertain.metrics.find((metric) => metric.label === 'Link').value,'Unknown');
+
+  const disconnected = fixture([
+    ['binary_sensor.detector_ethernet_connected','off',{device_class:'connectivity'}],
+    ['binary_sensor.detector_radio_connection','off',{device_class:'connectivity'}],
+  ]).card;
+  assert.equal(disconnected.connectivity,'Offline');
+  assert.equal(disconnected.isOnline,false);
+  assert.equal(disconnected.metrics.find((metric) => metric.label === 'Link').value,'Offline');
+
+  const unknown = fixture([
+    ['binary_sensor.detector_ethernet_connected','unknown',{device_class:'connectivity'}],
+    ['binary_sensor.detector_radio_connection','unavailable',{device_class:'connectivity'}],
+  ]).card;
+  assert.equal(unknown.connectivity,'Unknown');
+  assert.equal(unknown.isOnline,false);
+  assert.equal(unknown.metrics.find((metric) => metric.label === 'Link').value,'Unknown');
 });
 
 test('operational on/open/online and missing historical events are not faults', () => {
