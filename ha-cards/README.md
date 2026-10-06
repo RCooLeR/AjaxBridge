@@ -99,6 +99,7 @@ Compact chips card:
 ```yaml
 type: custom:ajaxbridge-chips-card
 max_chips: 7
+dahua_base: https://ha.example.test/dahua-bridge
 grid_power_alarm_entities:
   - "ajaxbridge_jeedom_sia_<account>_zone_<zone>_input_alarm"
 ```
@@ -118,6 +119,7 @@ Reference notes for DahuaBridge camera discovery, live playback, and SMD/IVS roo
 - Room hero backgrounds prefer area pictures and fall back to linked image or camera entities.
 - AjaxBridge devices come from the Home Assistant device/entity registries plus MQTT entities published by AjaxBridge.
 - Grid-power status is derived only from the `input_alarm` entity or unique ids explicitly listed in `grid_power_alarm_entities`.
+- Summary chips are rendered only when their backing mapping or discovered HA source exists. Security mode requires a mode or active-alarm source; SMD/IVS requires a configured Dahua analytics channel; switch counts require discovered matching devices. A configured source with a valid zero value remains visible (including `Alerts: 0`); an absent source does not produce a `0/0` placeholder.
 - Summary chips are interactive: select one to see the sources behind its total, including the meaning of `x/y` device counts. Mapped grid outages are shown as informational status and are excluded from Alerts.
 - Dahua and Roller devices are grouped by Home Assistant device and rendered inside their assigned room.
 - Dahua camera event rows are limited to SMD/IVS detection state and camera online/offline state. Unavailable SMD/IVS sensors, stream, codec, ONVIF/H.264, profile, capability, and other diagnostic entities are ignored for camera events and alerts.

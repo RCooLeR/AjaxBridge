@@ -8,11 +8,12 @@ interface ChipsOverviewViewProps {
   maxChips?: number;
   hass?: HomeAssistant;
   account?: string;
+  dahuaBase?: string;
   gridPowerAlarmEntities?: readonly string[];
 }
 
-export function ChipsOverviewView({ maxChips, hass, account, gridPowerAlarmEntities }: ChipsOverviewViewProps) {
-  const liveData = useDashboardData(hass, account, undefined, gridPowerAlarmEntities);
+export function ChipsOverviewView({ maxChips, hass, account, dahuaBase, gridPowerAlarmEntities }: ChipsOverviewViewProps) {
+  const liveData = useDashboardData(hass, account, dahuaBase, gridPowerAlarmEntities);
   const data = hass ? liveData : dashboardData;
   const compactSystemState = filterCompactSystemState(data.systemState);
 
