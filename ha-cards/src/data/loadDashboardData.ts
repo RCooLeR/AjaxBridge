@@ -55,19 +55,6 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
       },
     },
     {
-      id: 'system-grid-power',
-      label: 'Grid power',
-      value: 'Unknown',
-      icon: { category: 'system-states', key: 'grid_power' },
-      tone: 'slate',
-      active: false,
-      details: {
-        title: 'Grid power',
-        summary: 'Informational mains status from the raw input alarms explicitly mapped in Home Assistant. It is not a security alarm.',
-        items: [{ id: 'grid-power-unconfigured', label: 'Configured grid inputs', value: 'None available', tone: 'slate' }],
-      },
-    },
-    {
       id: 'system-smd',
       label: 'SMD today',
       value: String(smdIvsTotals.human + smdIvsTotals.vehicle + smdIvsTotals.animal || fallbackSmdCount),

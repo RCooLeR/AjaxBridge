@@ -334,12 +334,12 @@ test('SIA power-failure is an operational fault, while clear is nominal and temp
   assert.equal(data.rooms[0].safety.smokeHigh,1);
 });
 
-test('HA-mapped Transmitter input alarm becomes an informational grid outage', () => {
+test('HA unique-id-mapped Transmitter input alarm survives an entity-id rename', () => {
   const {card,data}=fixture([
-    ['binary_sensor.grid_input_alarm','on',{device_class:'safety',friendly_name:'Input alarm',metric:'input_alarm'},{unique_id:'ajaxbridge_jeedom_sia_a0f80d_zone_6_input_alarm'}],
+    ['binary_sensor.ob_iekt_grid_input_alarm','on',{device_class:'safety',friendly_name:'Input alarm',metric:'input_alarm'},{unique_id:'ajaxbridge_jeedom_sia_a0f80d_zone_6_input_alarm'}],
     ['sensor.last_event_name','Input alarm',{}, {unique_id:'ajaxbridge_zone_a0f80d_6_last_event_name'}],
     ['sensor.last_event_at','2026-09-24T10:00:00Z',{}, {unique_id:'ajaxbridge_zone_a0f80d_6_last_event_at'}],
-  ],'Transmitter','Grid power detector',undefined,['binary_sensor.grid_input_alarm']);
+  ],'Transmitter','Grid power detector',undefined,['ajaxbridge_jeedom_sia_a0f80d_zone_6_input_alarm']);
   assert.equal(card.status,'Grid power off');
   assert.equal(card.tone,'amber');
   assert.equal(card.attention,false);
@@ -371,12 +371,27 @@ test('unmapped Transmitter input alarm remains a critical safety alert', () => {
   assert.equal(chip(data,'system-mode').value,'Alarm');
   assert.ok(chip(data,'system-mode').details.items.some((item)=>item.label==='Gate contact'&&item.value===card.status));
   assert.ok(chip(data,'system-alerts').details.items.some((item)=>item.label==='Gate contact'&&item.tone==='red'));
+  assert.equal(chip(data,'system-grid-power'),undefined);
+  assert.equal(data.rooms[0].gridPower,undefined);
+});
+
+test('missing or blank grid mapping omits the informational chip', () => {
+  for (const selectors of [[], ['', '  ']]) {
+    const {data}=fixture([], 'MotionProtect', 'Detector', undefined, selectors);
+    assert.equal(chip(data,'system-grid-power'),undefined);
+  }
+});
+
+test('stale grid input selector is reported as unmatched and does not suppress alarms', () => {
+  const {card,data}=fixture([
+    ['binary_sensor.input_alarm','on',{device_class:'safety',friendly_name:'Input alarm',metric:'input_alarm'},{unique_id:'ajaxbridge_jeedom_sia_a0f80d_zone_6_input_alarm'}],
+  ],'Transmitter','Gate contact',undefined,['ajaxbridge_jeedom_sia_a0f80d_zone_999_input_alarm']);
+  assert.equal(card.attention,true);
   assert.equal(chip(data,'system-grid-power').value,'Unknown');
   assert.deepEqual(
     chip(data,'system-grid-power').details.items.map((item)=>[item.label,item.value]),
-    [['Configured grid inputs','None available']],
+    [['Configured grid inputs','No matching HA entity']],
   );
-  assert.equal(data.rooms[0].gridPower,undefined);
 });
 
 test('HA-mapped Transmitter clear state reports restored mains as one known source', () => {
