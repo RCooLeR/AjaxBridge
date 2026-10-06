@@ -48,12 +48,19 @@ func MappingFor(evt Event) Mapping {
 	case "etatdelabatterie", "batterystate":
 		return diagnosticSensorMapping("battery_state", "Battery state", unit, "", "", false)
 	case "signal", "rssi":
-		if strings.EqualFold(strings.TrimSpace(evt.Subtype), "numeric") || strings.EqualFold(unit, "dBm") {
+		// Jeedom sometimes keeps the historical dBm unit on enum-backed Ajax
+		// signal commands. The subtype is the source of truth: publishing values
+		// such as STRONG as signal_strength measurements makes Home Assistant
+		// reject every state as non-numeric.
+		if strings.EqualFold(strings.TrimSpace(evt.Subtype), "numeric") {
 			return sensorMapping("signal_dbm", "Signal", firstNonEmpty(unit, "dBm"), "signal_strength", "measurement", true)
 		}
-		return diagnosticSensorMapping("signal_level", "Signal", unit, "", "", false)
+		return diagnosticSensorMapping("signal_level", "Signal", "", "", "", false)
 	case "intensitedusignalcellulaire", "cellularsignalstrength":
-		return sensorMapping("signal_dbm", "Signal", firstNonEmpty(unit, "dBm"), "signal_strength", "measurement", true)
+		if strings.EqualFold(strings.TrimSpace(evt.Subtype), "numeric") {
+			return diagnosticSensorMapping("gsm_signal_dbm", "GSM signal", firstNonEmpty(unit, "dBm"), "signal_strength", "measurement", true)
+		}
+		return diagnosticSensorMapping("gsm_signal_level", "GSM signal", "", "", "", false)
 	case "humidite", "humidity":
 		return sensorMapping("humidity_percent", "Humidity", firstNonEmpty(unit, "%"), "humidity", "measurement", true)
 	case "co2":
@@ -122,7 +129,7 @@ func MappingFor(evt Event) Mapping {
 	case "photochannelsignal":
 		return channelSignalMapping("photo_channel_signal", "Photo channel signal", evt, unit)
 	case "ethernetenabled":
-		return diagnosticBinaryMapping("ethernet_enabled", "Ethernet enabled", "connectivity")
+		return diagnosticBinaryMapping("ethernet_enabled", "Ethernet enabled", "")
 	case "ethernetconnected":
 		return diagnosticBinaryMapping("ethernet_connected", "Ethernet connected", "connectivity")
 	case "jewellerantennastatus":
@@ -167,6 +174,37 @@ func MappingFor(evt Event) Mapping {
 // while unknown identifiers still fall through to the normal alias mapping.
 func contractMappingFor(evt Event, unit string) (Mapping, bool) {
 	switch commandKey(evt.LogicalID) {
+	case "activechannelethernet":
+		return diagnosticBinaryMapping("ethernet_active", "Ethernet active", "connectivity"), true
+	case "activechannelwifi":
+		return diagnosticBinaryMapping("wifi_active", "Wi-Fi active", "connectivity"), true
+	case "activechannelgsm":
+		return diagnosticBinaryMapping("gsm_active", "GSM active", "connectivity"), true
+	case "ethernetenabled":
+		return diagnosticBinaryMapping("ethernet_enabled", "Ethernet enabled", ""), true
+	case "gsmgprsenabled":
+		return diagnosticBinaryMapping("cellular_data_enabled", "Cellular data enabled", ""), true
+	case "wifienabled":
+		return diagnosticBinaryMapping("wifi_enabled", "Wi-Fi enabled", ""), true
+	case "wifisignallevel":
+		return diagnosticSensorMapping("wifi_signal_level", "Wi-Fi signal", "", "", "", false), true
+	case "gsmsignallevel":
+		if strings.EqualFold(strings.TrimSpace(evt.Subtype), "numeric") {
+			return diagnosticSensorMapping("gsm_signal_dbm", "GSM signal", firstNonEmpty(unit, "dBm"), "signal_strength", "measurement", true), true
+		}
+		return diagnosticSensorMapping("gsm_signal_level", "GSM signal", "", "", "", false), true
+	case "noiselevelhigh":
+		return diagnosticBinaryMapping("jeweller_interference", "Jeweller interference", "problem"), true
+	case "noiselevelavgvaluechannel1":
+		return diagnosticSensorMapping("jeweller_noise_channel_1", "Jeweller noise channel 1", unit, "", "measurement", true), true
+	case "noiselevelavgvaluechannel2":
+		return diagnosticSensorMapping("jeweller_noise_channel_2", "Jeweller noise channel 2", unit, "", "measurement", true), true
+	case "noiselevelavgvaluedatachannel":
+		return diagnosticSensorMapping("wings_noise", "Wings noise", unit, "", "measurement", true), true
+	case "jewellerlostheartbeatsthreshold":
+		return diagnosticSensorMapping("jeweller_lost_heartbeats_threshold", "Jeweller lost-heartbeat threshold", unit, "", "measurement", true), true
+	case "jewellerdetectorpingintervalseconds":
+		return diagnosticSensorMapping("jeweller_ping_interval", "Jeweller ping interval", firstNonEmpty(unit, "s"), "duration", "measurement", true), true
 	case "currentma":
 		return electricalMapping("current", unit), true
 	case "powerwth":
@@ -390,12 +428,12 @@ func diagnosticSensorMapping(metric, name, unit, deviceClass, stateClass string,
 }
 
 func channelSignalMapping(metric, name string, evt Event, unit string) Mapping {
-	if strings.EqualFold(strings.TrimSpace(evt.Subtype), "numeric") || strings.EqualFold(unit, "dBm") {
+	if strings.EqualFold(strings.TrimSpace(evt.Subtype), "numeric") {
 		mapping := sensorMapping(metric, name, firstNonEmpty(unit, "dBm"), "signal_strength", "measurement", true)
 		mapping.EntityCategory = "diagnostic"
 		return mapping
 	}
-	return diagnosticSensorMapping(metric, name, unit, "", "", false)
+	return diagnosticSensorMapping(metric, name, "", "", "", false)
 }
 
 func binaryMapping(metric, name, deviceClass string) Mapping {

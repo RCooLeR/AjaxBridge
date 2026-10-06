@@ -25,7 +25,9 @@ function getEventStatusClass(tone: GlowTone): string {
 
 export function DeviceCard({ device, eventStatusLabel, eventStatusTone, selected, onSelect }: DeviceCardProps) {
   const metrics = device.metrics ?? [];
-  const visibleMetrics = metrics.slice(0, 4);
+  // Reserve one extra Hub tile for Link + three uplinks + Jeweller health,
+  // while keeping lower-priority diagnostics behind the existing More tile.
+  const visibleMetrics = metrics.slice(0, device.type === 'hub' ? 5 : 4);
   const hiddenMetricCount = Math.max(0, metrics.length - visibleMetrics.length);
 
   return (

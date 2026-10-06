@@ -36,6 +36,26 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
     || fallbackSmdCount > 0
     || fallbackIvsCount > 0
     || rooms.some((room) => (room.dahuaCameraCount ?? 0) > 0);
+  const smdEventTypeItems: DashboardChipDetailItem[] = [
+    { id: 'smd-human', label: 'People', value: String(shownHumanCount), tone: shownHumanCount > 0 ? 'violet' : 'slate' },
+    { id: 'smd-vehicle', label: 'Vehicles', value: String(shownVehicleCount), tone: shownVehicleCount > 0 ? 'violet' : 'slate' },
+    { id: 'smd-animal', label: 'Animals', value: String(shownAnimalCount), tone: shownAnimalCount > 0 ? 'violet' : 'slate' },
+  ];
+  const smdZoneItems: DashboardChipDetailItem[] = rooms.flatMap((room) => {
+    const count = (room.smdIvs?.human ?? 0) + (room.smdIvs?.vehicle ?? 0) + (room.smdIvs?.animal ?? 0);
+    return count > 0
+      ? [{ id: `room:${room.id}`, label: room.name, value: String(count), tone: 'violet' }]
+      : [];
+  });
+  const ivsEventTypeItems: DashboardChipDetailItem[] = [
+    { id: 'ivs-total', label: 'Tripwire / intrusion events', value: String(shownIvsCount), tone: shownIvsCount > 0 ? 'amber' : 'slate' },
+  ];
+  const ivsZoneItems: DashboardChipDetailItem[] = rooms.flatMap((room) => {
+    const count = room.smdIvs?.ivs ?? 0;
+    return count > 0
+      ? [{ id: `room:${room.id}`, label: room.name, value: String(count), tone: 'amber' }]
+      : [];
+  });
   const staticSwitchItems = (items: Device[]): DashboardChipDetailItem[] => items.length > 0
     ? items.map((device) => ({
       id: `device:${device.id}`,
@@ -67,11 +87,13 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
       active: smdIvsTotals.total > 0 || fallbackSmdCount > 0,
       details: {
         title: 'Smart Motion Detection',
-        summary: 'The total is people + vehicles + animals reported by SMD analytics.',
-        items: [
-          { id: 'smd-human', label: 'People', value: String(shownHumanCount), tone: shownHumanCount > 0 ? 'violet' : 'slate' },
-          { id: 'smd-vehicle', label: 'Vehicles', value: String(shownVehicleCount), tone: shownVehicleCount > 0 ? 'violet' : 'slate' },
-          { id: 'smd-animal', label: 'Animals', value: String(shownAnimalCount), tone: shownAnimalCount > 0 ? 'violet' : 'slate' },
+        summary: 'The total is people + vehicles + animals reported by SMD analytics. Zone rows show where those events were counted.',
+        items: [...smdEventTypeItems, ...smdZoneItems],
+        sections: [
+          { id: 'event-types', title: 'Event types', items: smdEventTypeItems },
+          ...(smdZoneItems.length > 0
+            ? [{ id: 'zones', title: 'Zones', items: smdZoneItems, scrollable: true }]
+            : []),
         ],
       },
     }),
@@ -84,8 +106,14 @@ function buildStaticSystemState(devices: Device[], events: EventItem[], rooms: R
       active: smdIvsTotals.ivs > 0 || fallbackIvsCount > 0,
       details: {
         title: 'IVS events',
-        summary: 'Tripwire and intrusion events reported by camera IVS analytics.',
-        items: [{ id: 'ivs-total', label: 'Tripwire / intrusion events', value: String(shownIvsCount), tone: shownIvsCount > 0 ? 'amber' : 'slate' }],
+        summary: 'Tripwire and intrusion events reported by camera IVS analytics, grouped by zone.',
+        items: [...ivsEventTypeItems, ...ivsZoneItems],
+        sections: [
+          { id: 'event-types', title: 'Event types', items: ivsEventTypeItems },
+          ...(ivsZoneItems.length > 0
+            ? [{ id: 'zones', title: 'Zones', items: ivsZoneItems, scrollable: true }]
+            : []),
+        ],
       },
     }),
     ...staticChipWhen(outlets.length > 0, {

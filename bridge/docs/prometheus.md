@@ -140,6 +140,11 @@ Value timestamps describe when the bridge received an observation, not necessari
 
 Boolean polarity follows the `metric` label. For example, `online`, `radio_connection`, and `external_power` are `1` when available/connected/powered; `battery_fault`, `tamper`, and `smoke_alarm` are `1` when the condition is active. An operational `state=1` is on, not an alarm. Boolean diagnostics are exported independently of the SIA security aggregate.
 
+For Hub 2 Plus, `ethernet_active`, `wifi_active`, and `gsm_active` are `1` only
+when the transport appeared in the most recently received `activeChannels`
+array. They are last-reported channel selections, not substitutes for the Hub
+`online` metric. The separate `*_enabled` values describe configuration only.
+
 Only the following string enums become state labels. Tokens are case-insensitive; spaces and hyphens normalize to underscores. Any unrecognized nonempty token selects `unknown`, so arbitrary payloads cannot create new labels or appear healthy. Missing/null values have no state series. The new operating and antenna states follow the [official Ajax API 1.152 schema](https://api.ajax.systems/api/swagger/history/1.152.0/swagger.yaml): `DeviceState`, `ButtonBase.buttonMode`, `ButtonBase.batteryPingStatus`, `AntennaStatus`, and `SuperiorRexG3` antenna fields.
 
 | `metric` | Supported `state` labels |
@@ -147,7 +152,7 @@ Only the following string enums become state labels. Tokens are case-insensitive
 | `battery_state` | `charged`, `charging`, `discharged`, `low`, `empty`, `unknown` |
 | `battery_check_status` | `ok`, `not_ok`, `failed`, `in_progress`, `not_performed`, `unknown` |
 | `valve_position` | `open`, `closed`, `intermediate`, `opening`, `closing`, `unknown` |
-| `signal_level` | `no_signal`, `weak`, `normal`, `strong`, `unknown` |
+| `signal_level`, `gsm_signal_level`, `wifi_signal_level` | `no_signal`, `weak`, `normal`, `strong`, `unknown` |
 | `photo_channel_signal`, `data_channel_signal` | `no_signal`, `weak`, `normal`, `strong`, `absent`, `very_low`, `low`, `medium`, `high`, `unknown` |
 | `operating_mode` | `panic_button`, `smart_button`, `interconnect_delay`, `unknown` |
 | `jeweller_antenna_status`, `wings_antenna_status` | `connected`, `disconnected`, `damaged`, `unknown` |

@@ -490,17 +490,41 @@ Known Jeedom entities:
 | `sensor` | `battery_state` | `Battery state` | none | none | none |
 | `sensor` | `signal_dbm` | `Signal` | `dBm` | `signal_strength` | `measurement` |
 | `sensor` | `signal_level` | `Signal` | none | none | none |
+| `sensor` | `gsm_signal_dbm` | `GSM signal` | `dBm` | `signal_strength` | `measurement` |
+| `sensor` | `gsm_signal_level` | `GSM signal` | none | none | none |
+| `sensor` | `wifi_signal_level` | `Wi-Fi signal` | none | none | none |
 | `sensor` | `humidity_percent` | `Humidity` | `%` | `humidity` | `measurement` |
 | `binary_sensor` or `sensor` | `state` | `State` | none | none | none |
 | `binary_sensor` | `online` | `Online` | none | `connectivity` | none |
 | `binary_sensor` | `tamper` | `Tamper` | none | `tamper` | none |
 | `binary_sensor` | `external_power` | `External power` | none | `power` | none |
-| `binary_sensor` | `cellular_data_active` | `Cellular data active` | none | `connectivity` | none |
+| `binary_sensor` | `ethernet_active` | `Ethernet active` | none | `connectivity` | none |
+| `binary_sensor` | `wifi_active` | `Wi-Fi active` | none | `connectivity` | none |
+| `binary_sensor` | `gsm_active` | `GSM active` | none | `connectivity` | none |
+| `binary_sensor` | `ethernet_enabled` | `Ethernet enabled` | none | none | none |
+| `binary_sensor` | `wifi_enabled` | `Wi-Fi enabled` | none | none | none |
+| `binary_sensor` | `cellular_data_enabled` | `Cellular data enabled` | none | none | none |
+| `binary_sensor` | `jeweller_interference` | `Jeweller interference` | none | `problem` | none |
+| `sensor` | `jeweller_noise_channel_1` | `Jeweller noise channel 1` | source-defined | none | `measurement` |
+| `sensor` | `jeweller_noise_channel_2` | `Jeweller noise channel 2` | source-defined | none | `measurement` |
+| `sensor` | `wings_noise` | `Wings noise` | source-defined | none | `measurement` |
+| `sensor` | `jeweller_lost_heartbeats_threshold` | `Jeweller lost-heartbeat threshold` | source-defined | none | `measurement` |
+| `sensor` | `jeweller_ping_interval` | `Jeweller ping interval` | `s` | `duration` | `measurement` |
 | `sensor` | `gsm_network_type` | `GSM network type` | none | none | none |
 | `binary_sensor` | `opening` | `Opening` | none | `opening` | none |
 | `binary_sensor` | `door` | `Door` | none | `door` | none |
 | `binary_sensor` | `leak` | `Leak` | none | `moisture` | none |
 | `binary_sensor` | `input_alarm` | `Input alarm` | none | `safety` | none |
+
+Hub Internet channel entities are source-driven. `*_active` is derived only
+from the most recently received Ajax `activeChannels` array. A partial update
+without that array preserves the last reported values, so consumers must use
+the Hub's overall `online` entity to distinguish a current reading from a
+last-known channel selection while the Hub is unavailable. `*_enabled` is a
+configuration flag and deliberately has no `connectivity` device class.
+Jeweller is a device radio protocol rather than an Internet uplink; the bridge
+exposes its source-backed interference/noise and timing diagnostics instead of
+inventing a hub-wide connected flag.
 
 For every ordinary Ajax Transmitter, the bridge derives the raw physical-input state from its Jeedom event code: `M_11_3F` is `input_alarm: on` and `M_11_40` is `input_alarm: off`. The state is retained across unrelated events and restarts. AjaxBridge deliberately does not assign application meaning to this input. Home Assistant automations or cards decide whether a particular entity is a gate contact, utility-power detector, or another signal.
 

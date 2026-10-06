@@ -181,6 +181,15 @@ func TestJeedomBoundedEnumsAndFirmwareChanges(t *testing.T) {
 		assertJeedomGauge(t, registry, "ajax_jeedom_command_state", map[string]string{"command_id": id, "metric": test.metric, "state": test.state}, 1)
 		assertJeedomAbsent(t, registry, "ajax_jeedom_command_state", map[string]string{"state": "unknown_arbitrary_message"})
 	}
+	for i, test := range []struct{ logicalID, value, metric, state string }{
+		{"wifi::signalLevel", "STRONG", "wifi_signal_level", "strong"},
+		{"gsm::signalLevel", "NORMAL", "gsm_signal_level", "normal"},
+	} {
+		value, _ := json.Marshal(test.value)
+		id := fmt.Sprint(200 + i)
+		store.Apply(jeedom.Event{CommandID: id, DeviceName: "Hub fixture", CommandName: "Signal", LogicalID: test.logicalID, Subtype: "string", Unit: "dBm", Value: value, ReceivedAt: time.Unix(600, 0)})
+		assertJeedomGauge(t, registry, "ajax_jeedom_command_state", map[string]string{"command_id": id, "metric": test.metric, "state": test.state}, 1)
+	}
 	for _, version := range []string{"5.54.1.0", "6.0", "123456.123456.123456.123456.123456.123456"} {
 		value, _ := json.Marshal(version)
 		store.Apply(jeedom.Event{CommandID: "2", DeviceName: "Fixture", CommandName: "Firmware version", Value: value, ReceivedAt: time.Unix(700, 0)})

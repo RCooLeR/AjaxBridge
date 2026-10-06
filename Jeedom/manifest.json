@@ -1,20 +1,20 @@
 {
-  "bundle": "2026.09.25.1",
-  "date": "2026-09-25",
+  "bundle": "2026.10.06.1",
+  "date": "2026-10-06",
   "plugin_id": "ajaxSystem",
   "jeedom_minimum_from_upstream_metadata": "4.4",
   "baseline_commit": "0ee0a700a0f1d5fa578e0e51a762a15e98daeb69",
   "source_commit": "af5a742706f7185a4b018e94671d1b7ed8b0e731",
   "baseline_description": "Local snapshot; latest original changelog entry 2026-01-12. Not an official release identifier. Transmitter temperature already present.",
-  "runtime_file_count": 43,
-  "hash_notes": "Source and baseline hashes normalize CRLF to LF; packaged hashes are exact bytes. Files include modification notices and LF endings. The WallSwitch unit correction is a package-local change after source_commit; source_sha256_lf retains the original source provenance.",
+  "runtime_file_count": 44,
+  "hash_notes": "Source and baseline hashes normalize CRLF to LF; packaged hashes are exact bytes. Files include modification notices and LF endings. The WallSwitch unit correction and Hub 2 Plus channel telemetry are package-local changes after source_commit; source_sha256_lf retains the original source provenance.",
   "files": [
     {
       "path": "core/class/ajaxSystem.class.php",
       "kind": "modified",
       "source_sha256_lf": "f40ad344b0cd081a3bfb1086ef7eeb6ff8be5a4bfb525928d999995f0f8ce33e",
       "baseline_sha256_lf": "01a49fc99800c6773afbadd0daeee7c84e8fb3b91d9a986d84549fde11d0652c",
-      "packaged_sha256": "2d4d2305f33b42411c7f0a4d9adca49d4e5db326487d676a16242f613a3c9ad9"
+      "packaged_sha256": "ce55f1110a936e8a40b7bd68141f535a85899b00d1e758c829840909706310d4"
     },
     {
       "path": "core/config/devices/Button.json",
@@ -211,6 +211,14 @@
       "source_sha256_lf": "5f0307087f9fa2764d2118edc73fb2a5f8c029b12c56510e6f59c1f65292be7f",
       "baseline_sha256_lf": "ef76969d421fe783d80b51ae7c796ca7157c7d07a73644bc5afaff645d0a713f",
       "packaged_sha256": "8fcab4bf6cbd88b47ad7cb6dee8d64485c11cbb2e7d57598de574712c8556038"
+    },
+    {
+      "path": "core/config/devices/HUB_2_PLUS.json",
+      "kind": "modified",
+      "source_sha256_lf": "f010480cf5919af509afd30e0409000c51a76792133881c9a5a637157f48d350",
+      "baseline_sha256_lf": "f010480cf5919af509afd30e0409000c51a76792133881c9a5a637157f48d350",
+      "packaged_sha256": "eff9032e9aaddedb17f0fef555621c7c35e4c533888135381061b8d5ec02f49c",
+      "package_changes": "2026.10.06.1: active uplink booleans derived only from a validated sequential activeChannels enum list, Wi-Fi enabled/signal, and Jeweller settings/noise; no fabricated Jeweller connected state."
     },
     {
       "path": "core/config/devices/LifeQualityLite.json",

@@ -1,6 +1,6 @@
 # AjaxBridge patch for the Jeedom Ajax Systems plugin
 
-Bundle: 2026.09.25.1. Modified/packaged: 2026-09-25.
+Bundle: 2026.10.06.1. Modified/packaged: 2026-10-06.
 Upstream plugin author: Jeedom SAS (from plugin_info/info.json).
 Local modifications: AjaxBridge contributors.
 
@@ -37,7 +37,13 @@ modified program. See the bundle's LICENSING.md for evidence and details.
 - plugin_info/install.php: adds missing info commands during plugin update.
 - core/config/devices/*.json: added/extended telemetry templates for Button,
   SpaceControl, WaterStop, ReX, MultiTransmitter, LifeQualityLite, FireProtect
-  families and WallSwitch state. Each supplied file identifies this patch.
+  families, WallSwitch state and Hub 2 Plus communication diagnostics. Each
+  supplied file identifies this patch.
+- HUB_2_PLUS.json and the shared parser: derive current Ethernet, Wi-Fi and GSM
+  uplinks only from a sequential list of known string activeChannels enums;
+  malformed arrays preserve prior readings. They also expose Wi-Fi
+  configuration/signal plus truthful Jeweller settings/noise, without inventing
+  a global Jeweller connected state.
 - WallSwitch.json: new currentMA and powerWtH commands explicitly use mA and
   Wh without numeric conversion; the counter is named Consommation. Existing
   command IDs, units, formulas and history are not migrated by synchronization.
@@ -51,8 +57,9 @@ Telemetry commit: 92fee87fdc1762fd6143de6b4fd6c2ee3cd8ae2a.
 State commit: af5a742706f7185a4b018e94671d1b7ed8b0e731.
 These identify a local source tracker, not official Jeedom release tags.
 The package also normalizes text line endings to LF and adds modification
-notices. The 2026.09.25.1 WallSwitch unit correction is local to this package,
-after the source commits above; PHP logic and Socket templates are unchanged.
+notices. The WallSwitch unit correction and 2026.10.06.1 Hub 2 Plus channel
+telemetry are local to this package after the source commits above. Socket
+templates are unchanged.
 
 The complete list of runtime files and source/base/package hashes is provided in
 the bundle's manifest.json. METRICS.md documents model-specific fields and known

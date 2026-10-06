@@ -121,6 +121,7 @@ func TestMappingProductionJeedomCommands(t *testing.T) {
 		{name: "Etat", subtype: "binary", metric: "state", component: ComponentBinarySensor, binary: true},
 		{name: "En ligne", subtype: "binary", metric: "online", component: ComponentBinarySensor, binary: true},
 		{name: "Signal", subtype: "string", metric: "signal_level", component: ComponentSensor},
+		{name: "Intensité du signal cellulaire", subtype: "string", metric: "gsm_signal_level", component: ComponentSensor},
 		{name: "Alimentation secteur", subtype: "binary", metric: "external_power", component: ComponentBinarySensor, binary: true},
 		{name: "Alimentation externe", subtype: "binary", metric: "external_power", component: ComponentBinarySensor, binary: true},
 	}
@@ -216,6 +217,52 @@ func TestMappingContractMetadataPrecedesDisplayAliases(t *testing.T) {
 	}
 }
 
+func TestMappingHubTransportAndJewellerContracts(t *testing.T) {
+	tests := []struct {
+		name           string
+		event          Event
+		metric         string
+		component      string
+		entityName     string
+		deviceClass    string
+		entityCategory string
+		numeric        bool
+		binary         bool
+		unit           string
+	}{
+		{name: "Ethernet active uplink", event: Event{LogicalID: "activeChannel::ETHERNET", Subtype: "binary"}, metric: "ethernet_active", component: ComponentBinarySensor, entityName: "Ethernet active", deviceClass: "connectivity", entityCategory: "diagnostic", binary: true},
+		{name: "Wi-Fi active uplink", event: Event{LogicalID: "activeChannel::WIFI", Subtype: "binary"}, metric: "wifi_active", component: ComponentBinarySensor, entityName: "Wi-Fi active", deviceClass: "connectivity", entityCategory: "diagnostic", binary: true},
+		{name: "GSM active uplink", event: Event{LogicalID: "activeChannel::GSM", Subtype: "binary"}, metric: "gsm_active", component: ComponentBinarySensor, entityName: "GSM active", deviceClass: "connectivity", entityCategory: "diagnostic", binary: true},
+		{name: "Ethernet enabled", event: Event{LogicalID: "ethernet::enabled", Subtype: "binary"}, metric: "ethernet_enabled", component: ComponentBinarySensor, entityName: "Ethernet enabled", entityCategory: "diagnostic", binary: true},
+		{name: "Cellular data enabled", event: Event{LogicalID: "gsm::gprsEnabled", Subtype: "binary"}, metric: "cellular_data_enabled", component: ComponentBinarySensor, entityName: "Cellular data enabled", entityCategory: "diagnostic", binary: true},
+		{name: "Wi-Fi enabled", event: Event{LogicalID: "wifi::enabled", Subtype: "binary"}, metric: "wifi_enabled", component: ComponentBinarySensor, entityName: "Wi-Fi enabled", entityCategory: "diagnostic", binary: true},
+		{name: "Wi-Fi enum signal", event: Event{LogicalID: "wifi::signalLevel", Subtype: "string", Unit: "dBm"}, metric: "wifi_signal_level", component: ComponentSensor, entityName: "Wi-Fi signal", entityCategory: "diagnostic"},
+		{name: "GSM enum signal", event: Event{LogicalID: "gsm::signalLevel", Subtype: "string", Unit: "dBm"}, metric: "gsm_signal_level", component: ComponentSensor, entityName: "GSM signal", entityCategory: "diagnostic"},
+		{name: "GSM numeric signal", event: Event{LogicalID: "gsm::signalLevel", Subtype: "numeric", Unit: "dBm"}, metric: "gsm_signal_dbm", component: ComponentSensor, entityName: "GSM signal", deviceClass: "signal_strength", entityCategory: "diagnostic", numeric: true, unit: "dBm"},
+		{name: "Jeweller interference", event: Event{LogicalID: "noiseLevel::high", Subtype: "binary"}, metric: "jeweller_interference", component: ComponentBinarySensor, entityName: "Jeweller interference", deviceClass: "problem", entityCategory: "diagnostic", binary: true},
+		{name: "Jeweller noise channel 1", event: Event{LogicalID: "noiseLevel::avgValueChannel1", Subtype: "numeric"}, metric: "jeweller_noise_channel_1", component: ComponentSensor, entityName: "Jeweller noise channel 1", entityCategory: "diagnostic", numeric: true},
+		{name: "Jeweller ping interval", event: Event{LogicalID: "jeweller::detectorPingIntervalSeconds", Subtype: "numeric"}, metric: "jeweller_ping_interval", component: ComponentSensor, entityName: "Jeweller ping interval", deviceClass: "duration", entityCategory: "diagnostic", numeric: true, unit: "s"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mapping := MappingFor(tt.event)
+			if mapping.Metric != tt.metric || mapping.Component != tt.component || mapping.EntityName != tt.entityName ||
+				mapping.DeviceClass != tt.deviceClass || mapping.EntityCategory != tt.entityCategory || mapping.Numeric != tt.numeric ||
+				mapping.Binary != tt.binary || mapping.Unit != tt.unit {
+				t.Fatalf("MappingFor(%#v) = %#v", tt.event, mapping)
+			}
+		})
+	}
+}
+
+func TestStringSignalWithStaleDBmUnitRemainsAnEnum(t *testing.T) {
+	mapping := MappingFor(Event{CommandName: "Signal", LogicalID: "signalLevel", Subtype: "string", Unit: "dBm"})
+	if mapping.Metric != "signal_level" || mapping.Numeric || mapping.Unit != "" || mapping.DeviceClass != "" || mapping.StateClass != "" {
+		t.Fatalf("string signal mapping = %#v", mapping)
+	}
+}
+
 func TestMappingExpandedDeviceFields(t *testing.T) {
 	tests := []struct {
 		command        string
@@ -229,7 +276,7 @@ func TestMappingExpandedDeviceFields(t *testing.T) {
 		{command: "Etat de la connexion radio", metric: "radio_connection", component: ComponentBinarySensor, name: "Radio connection", deviceClass: "connectivity", entityCategory: "diagnostic", binary: true},
 		{command: "Photo channel connection status", metric: "photo_channel_connection", component: ComponentBinarySensor, name: "Photo channel connection", deviceClass: "connectivity", entityCategory: "diagnostic", binary: true},
 		{command: "Niveau du signal du canal photo", metric: "photo_channel_signal", component: ComponentSensor, name: "Photo channel signal", entityCategory: "diagnostic"},
-		{command: "Ethernet", metric: "ethernet_enabled", component: ComponentBinarySensor, name: "Ethernet enabled", deviceClass: "connectivity", entityCategory: "diagnostic", binary: true},
+		{command: "Ethernet", metric: "ethernet_enabled", component: ComponentBinarySensor, name: "Ethernet enabled", entityCategory: "diagnostic", binary: true},
 		{command: "Connexion Ethernet", metric: "ethernet_connected", component: ComponentBinarySensor, name: "Ethernet connected", deviceClass: "connectivity", entityCategory: "diagnostic", binary: true},
 		{command: "Statut des antennes Jeweller", metric: "jeweller_antenna_status", component: ComponentSensor, name: "Jeweller antenna status", entityCategory: "diagnostic"},
 		{command: "Etat des antennes Wings", metric: "wings_antenna_status", component: ComponentSensor, name: "Wings antenna status", entityCategory: "diagnostic"},
@@ -265,6 +312,15 @@ func TestMappingNumericChannelSignalUsesSignalStrengthMetadata(t *testing.T) {
 		mapping := MappingFor(Event{CommandName: command, Subtype: "numeric", Unit: "dBm"})
 		if !mapping.Numeric || mapping.Unit != "dBm" || mapping.DeviceClass != "signal_strength" || mapping.StateClass != "measurement" || mapping.EntityCategory != "diagnostic" {
 			t.Fatalf("MappingFor(%q numeric) = %#v", command, mapping)
+		}
+	}
+}
+
+func TestStringChannelSignalWithStaleDBmUnitRemainsAnEnum(t *testing.T) {
+	for _, command := range []string{"Niveau du signal du canal photo", "Data channel signal level"} {
+		mapping := MappingFor(Event{CommandName: command, Subtype: "string", Unit: "dBm"})
+		if mapping.Numeric || mapping.Unit != "" || mapping.DeviceClass != "" || mapping.StateClass != "" || mapping.EntityCategory != "diagnostic" {
+			t.Fatalf("MappingFor(%q string) = %#v", command, mapping)
 		}
 	}
 }

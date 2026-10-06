@@ -77,4 +77,4 @@ foreach ($manifest['files'] as $entry) {
 if ($problems) {
     fail('Review required for ' . $problems . ' runtime files. Do not overwrite blindly; see README.md compatibility guidance.');
 }
-echo "Known baseline/patched files match. This checks the 43 overlay paths, not full Jeedom runtime compatibility.\n";
+echo 'Known baseline/patched files match. This checks the ' . count($manifest['files']) . " overlay paths, not full Jeedom runtime compatibility.\n";

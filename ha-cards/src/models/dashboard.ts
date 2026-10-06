@@ -41,6 +41,14 @@ export interface DashboardChipDetails {
   title: string;
   summary: string;
   items: DashboardChipDetailItem[];
+  sections?: DashboardChipDetailSection[];
+}
+
+export interface DashboardChipDetailSection {
+  id: string;
+  title: string;
+  items: DashboardChipDetailItem[];
+  scrollable?: boolean;
 }
 
 export interface DashboardChipDetailItem {

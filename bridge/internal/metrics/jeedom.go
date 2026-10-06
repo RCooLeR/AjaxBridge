@@ -216,6 +216,8 @@ var jeedomEnumStates = map[string][]string{
 	"battery_check_status":    {"ok", "not_ok", "failed", "in_progress", "not_performed", "unknown"},
 	"valve_position":          {"open", "closed", "intermediate", "opening", "closing", "unknown"},
 	"signal_level":            {"no_signal", "weak", "normal", "strong", "unknown"},
+	"wifi_signal_level":       {"no_signal", "weak", "normal", "strong", "unknown"},
+	"gsm_signal_level":        {"no_signal", "weak", "normal", "strong", "unknown"},
 	"photo_channel_signal":    {"no_signal", "weak", "normal", "strong", "absent", "very_low", "low", "medium", "high", "unknown"},
 	"data_channel_signal":     {"no_signal", "weak", "normal", "strong", "absent", "very_low", "low", "medium", "high", "unknown"},
 	"operating_mode":          {"panic_button", "smart_button", "interconnect_delay", "unknown"},
