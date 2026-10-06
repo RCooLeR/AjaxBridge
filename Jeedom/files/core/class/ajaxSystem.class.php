@@ -1,6 +1,6 @@
 <?php
 
-/* Modified 2026-09-24 by AjaxBridge contributors: expanded device telemetry and state parsing. See ajaxbridge-patch/NOTICE.md and license texts; original Jeedom notices remain applicable. */
+/* Modified 2026-10-06 by AjaxBridge contributors: expanded device telemetry, Hub 2 Plus active-channel derivation and state parsing. See ajaxbridge-patch/NOTICE.md and license texts; original Jeedom notices remain applicable. */
 
 /* This file is part of Jeedom.
 *
@@ -373,6 +373,34 @@ class ajaxSystem extends eqLogic {
         if (is_numeric($channels) && in_array($channels, array(0, 1, 2, 3))) {
           $_data['channelStatus_1'] = ((int) $channels & 1) ? 1 : 0;
           $_data['channelStatus_2'] = ((int) $channels & 2) ? 1 : 0;
+        }
+      }
+    }
+
+    // activeChannels lists the hub uplinks that are currently in use. Derive
+    // stable binary commands only when the list is present and well-formed:
+    // partial callbacks must not clear the last known channel state.
+    if (array_key_exists('activeChannels', $_data) && is_array($_data['activeChannels'])) {
+      $knownChannels = array('ETHERNET', 'WIFI', 'GSM');
+      $activeChannels = array();
+      $validActiveChannels = true;
+      $expectedIndex = 0;
+      foreach ($_data['activeChannels'] as $index => $channel) {
+        if ($index !== $expectedIndex || !is_string($channel)) {
+          $validActiveChannels = false;
+          break;
+        }
+        $channel = strtoupper(trim($channel));
+        if (!in_array($channel, $knownChannels, true)) {
+          $validActiveChannels = false;
+          break;
+        }
+        $activeChannels[$channel] = true;
+        $expectedIndex++;
+      }
+      if ($validActiveChannels) {
+        foreach ($knownChannels as $channel) {
+          $_data['activeChannel::' . $channel] = isset($activeChannels[$channel]) ? 1 : 0;
         }
       }
     }

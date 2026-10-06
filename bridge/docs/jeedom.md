@@ -311,13 +311,27 @@ Known Jeedom command labels are translated to English before being exposed to Ho
 | `Etat de la batterie` | `Battery state` | `battery_state` |
 | numeric `Signal`, `RSSI` | `Signal` | `signal_dbm` |
 | string `Signal` | `Signal` | `signal_level` |
+| `gsm::signalLevel` (numeric) | `GSM signal` | `gsm_signal_dbm` |
+| `gsm::signalLevel` (string) | `GSM signal` | `gsm_signal_level` |
+| `wifi::signalLevel` (string) | `Wi-Fi signal` | `wifi_signal_level` |
 | `Humidite` | `Humidity` | `humidity_percent` |
 | `CO2`, `Carbon dioxide` | `Carbon dioxide` | `co2_ppm` |
 | `Etat` | `State` | `state` |
 | `En ligne` | `Online` | `online` |
 | `Trafique`, `Tamper`, `Sabotage` | `Tamper` | `tamper` |
 | `Alimentation secteur` | `External power` | `external_power` |
-| `Donnees cellulaires actives` | `Cellular data active` | `cellular_data_active` |
+| `gsm::gprsEnabled` | `Cellular data enabled` | `cellular_data_enabled` |
+| `activeChannel::ETHERNET` | `Ethernet active` | `ethernet_active` |
+| `activeChannel::WIFI` | `Wi-Fi active` | `wifi_active` |
+| `activeChannel::GSM` | `GSM active` | `gsm_active` |
+| `ethernet::enabled` | `Ethernet enabled` | `ethernet_enabled` |
+| `wifi::enabled` | `Wi-Fi enabled` | `wifi_enabled` |
+| `noiseLevel::high` | `Jeweller interference` | `jeweller_interference` |
+| `noiseLevel::avgValueChannel1` | `Jeweller noise channel 1` | `jeweller_noise_channel_1` |
+| `noiseLevel::avgValueChannel2` | `Jeweller noise channel 2` | `jeweller_noise_channel_2` |
+| `noiseLevel::avgValueDataChannel` | `Wings noise` | `wings_noise` |
+| `jeweller::lostHeartbeatsThreshold` | `Jeweller lost-heartbeat threshold` | `jeweller_lost_heartbeats_threshold` |
+| `jeweller::detectorPingIntervalSeconds` | `Jeweller ping interval` | `jeweller_ping_interval` |
 | `Type reseau GSM` | `GSM network type` | `gsm_network_type` |
 | `Ouverture` | `Opening` | `opening` |
 | `Porte` | `Door` | `door` |

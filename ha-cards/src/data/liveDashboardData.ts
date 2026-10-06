@@ -1160,19 +1160,26 @@ function buildSystemState(
   }
 
   const smdTotal = smdIvsTotals.human + smdIvsTotals.vehicle + smdIvsTotals.animal;
-  const smdItems: DashboardChipDetailItem[] = [
+  const smdEventTypeItems: DashboardChipDetailItem[] = [
     { id: 'smd-human', label: 'People', value: String(smdIvsTotals.human), tone: smdIvsTotals.human > 0 ? 'violet' : 'slate' },
     { id: 'smd-vehicle', label: 'Vehicles', value: String(smdIvsTotals.vehicle), tone: smdIvsTotals.vehicle > 0 ? 'violet' : 'slate' },
     { id: 'smd-animal', label: 'Animals', value: String(smdIvsTotals.animal), tone: smdIvsTotals.animal > 0 ? 'violet' : 'slate' },
-    ...rooms
-      .filter((room) => roomSmdCount(room) > 0)
-      .map((room) => ({
-        id: `room:${room.id}`,
-        label: `Room: ${room.name}`,
-        value: String(roomSmdCount(room)),
-        tone: 'violet' as GlowTone,
-      })),
   ];
+  const smdZoneItems: DashboardChipDetailItem[] = rooms
+    .filter((room) => roomSmdCount(room) > 0)
+    .map((room) => ({
+      id: `room:${room.id}`,
+      label: room.name,
+      value: String(roomSmdCount(room)),
+      tone: 'violet' as GlowTone,
+    }));
+  const smdItems = [...smdEventTypeItems, ...smdZoneItems];
+  const ivsEventTypeItems: DashboardChipDetailItem[] = [{
+    id: 'ivs-total',
+    label: 'Tripwire / intrusion events',
+    value: String(smdIvsTotals.ivs),
+    tone: smdIvsTotals.ivs > 0 ? 'amber' : 'slate',
+  }];
   const ivsRoomItems: DashboardChipDetailItem[] = rooms
     .filter((room) => (room.smdIvs?.ivs ?? 0) > 0)
     .map((room) => ({
@@ -1181,9 +1188,7 @@ function buildSystemState(
       value: String(room.smdIvs?.ivs ?? 0),
       tone: 'amber' as GlowTone,
     }));
-  const ivsItems = ivsRoomItems.length > 0
-    ? ivsRoomItems
-    : [{ id: 'ivs-total', label: 'Tripwire / intrusion events', value: String(smdIvsTotals.ivs), tone: 'slate' as GlowTone }];
+  const ivsItems = [...ivsEventTypeItems, ...ivsRoomItems];
   const outletItems = buildSwitchChipDetailItems(outletDevices);
   const lightSwitchItems = buildSwitchChipDetailItems(lightSwitchDevices);
   const hasSecurityModeSource = accountModeSources.length > 0 || alarmActive;
@@ -1231,8 +1236,14 @@ function buildSystemState(
       active: smdTotal > 0,
       details: {
         title: 'Smart Motion Detection',
-        summary: 'The total is people + vehicles + animals reported by SMD analytics. Room rows show where those events were counted.',
+        summary: 'The total is people + vehicles + animals reported by SMD analytics. Zone rows show where those events were counted.',
         items: smdItems,
+        sections: [
+          { id: 'event-types', title: 'Event types', items: smdEventTypeItems },
+          ...(smdZoneItems.length > 0
+            ? [{ id: 'zones', title: 'Zones', items: smdZoneItems, scrollable: true }]
+            : []),
+        ],
       },
     }),
     ...chipWhen(dahuaAnalyticsConfigured, {
@@ -1244,8 +1255,14 @@ function buildSystemState(
       active: smdIvsTotals.ivs > 0,
       details: {
         title: 'IVS events',
-        summary: 'Tripwire and intrusion events reported by camera IVS analytics, grouped by Home Assistant room.',
+        summary: 'Tripwire and intrusion events reported by camera IVS analytics, grouped by Home Assistant zone.',
         items: ivsItems,
+        sections: [
+          { id: 'event-types', title: 'Event types', items: ivsEventTypeItems },
+          ...(ivsRoomItems.length > 0
+            ? [{ id: 'zones', title: 'Zones', items: ivsRoomItems, scrollable: true }]
+            : []),
+        ],
       },
     }),
     ...chipWhen(outletDevices.length > 0, {
@@ -2158,7 +2175,7 @@ function buildDeviceMetrics(
       candidates.push(relayState);
       continue;
     }
-    const candidate = metricCandidateFromEntity(entry, states[entry.entity_id]);
+    const candidate = metricCandidateFromEntity(entry, states[entry.entity_id], options.deviceType, ajaxContext?.connectivity);
     if (candidate) {
       candidates.push(candidate);
     }
@@ -2393,8 +2410,29 @@ function ajaxContextMetrics(context: AjaxDeviceMetricContext): MetricCandidate[]
 function metricCandidateFromEntity(
   entry: HomeAssistantEntityEntry,
   state?: HomeAssistantState,
+  deviceType?: string,
+  aggregateConnectivity?: string,
 ): MetricCandidate | null {
-  if (!state || isIgnoredMetricState(state)) {
+  if (!state) {
+    return null;
+  }
+
+  const hubTransport = hubTransportMetricCandidate(entry, state, deviceType, aggregateConnectivity);
+  if (hubTransport) {
+    return hubTransport;
+  }
+
+  const hubTransportSignal = hubTransportSignalMetricCandidate(entry, state, deviceType);
+  if (hubTransportSignal) {
+    return hubTransportSignal;
+  }
+
+  const hubJewellerDiagnostic = hubJewellerDiagnosticMetricCandidate(entry, state, deviceType);
+  if (hubJewellerDiagnostic) {
+    return hubJewellerDiagnostic;
+  }
+
+  if (isIgnoredMetricState(state)) {
     return null;
   }
   if (['last_event_name', 'last_event_at', 'last_signal', 'alarm_signal'].includes(ajaxEntitySemantic(entry, state.attributes) ?? '')) return null;
@@ -2437,6 +2475,267 @@ function metricCandidateFromEntity(
     };
   }
 
+  return null;
+}
+
+type HubTransportChannel = 'ethernet' | 'wifi' | 'gsm';
+type HubTransportObservation = 'active' | 'connected';
+
+interface HubTransportDefinition {
+  channel: HubTransportChannel;
+  label: string;
+  icon: IconRef;
+}
+
+const HUB_TRANSPORTS: HubTransportDefinition[] = [
+  { channel: 'ethernet', label: 'Ethernet', icon: { category: 'connectivity', key: 'ethernet' } },
+  { channel: 'wifi', label: 'Wi-Fi', icon: { category: 'connectivity', key: 'wifi' } },
+  { channel: 'gsm', label: 'GSM', icon: { category: 'connectivity', key: 'gsm' } },
+];
+
+function hubTransportMetricCandidate(
+  entry: HomeAssistantEntityEntry,
+  state: HomeAssistantState,
+  deviceType?: string,
+  aggregateConnectivity?: string,
+): MetricCandidate | null {
+  if (deviceType !== 'hub' || entityDomain(entry.entity_id) !== 'binary_sensor') {
+    return null;
+  }
+
+  const descriptor = normalizedMetricDescriptor(entry, state);
+  for (const definition of HUB_TRANSPORTS) {
+    const aliases = definition.channel === 'wifi' ? ['wifi', 'wi_fi'] : [definition.channel];
+    let observation: HubTransportObservation | null = null;
+    for (const alias of aliases) {
+      if (hasMetricToken(descriptor, `${alias}_active`) || hasMetricToken(descriptor, `active_channel_${alias}`)) {
+        observation = 'active';
+        break;
+      }
+      if (hasMetricToken(descriptor, `${alias}_connected`) || hasMetricToken(descriptor, `${alias}_connection`)) {
+        observation = 'connected';
+        break;
+      }
+    }
+    if (!observation) {
+      continue;
+    }
+
+    const stateValue = binaryObservationState(state.state);
+    const active = stateValue === true;
+    const observedValue = observation === 'active'
+      ? active ? 'Active' : 'Inactive'
+      : active ? 'Connected' : 'Disconnected';
+    const stale = Boolean(aggregateConnectivity && aggregateConnectivity !== 'Online');
+    const value = stateValue === null
+      ? 'Unknown'
+      : stale ? `Last known ${observedValue.toLowerCase()}` : observedValue;
+    const icon = definition.channel === 'wifi' && stateValue === false
+      ? { category: 'connectivity', key: 'wifi_off' } satisfies IconRef
+      : definition.icon;
+    return {
+      id: `metric:${entry.entity_id}`,
+      kind: `hub_transport_${definition.channel}`,
+      label: definition.label,
+      value,
+      icon,
+      // An inactive redundant path is diagnostic, not a Hub outage. The
+      // aggregate Link metric remains the only authoritative link health.
+      tone: active && !stale ? 'green' : 'slate',
+      priority: observation === 'active' ? 10 : 11,
+    };
+  }
+
+  return null;
+}
+
+function hubTransportSignalMetricCandidate(
+  entry: HomeAssistantEntityEntry,
+  state: HomeAssistantState,
+  deviceType?: string,
+): MetricCandidate | null {
+  if (deviceType !== 'hub' || entityDomain(entry.entity_id) !== 'sensor') {
+    return null;
+  }
+
+  const descriptor = normalizedMetricDescriptor(entry, state);
+  const definitions = [
+    { channel: 'wifi', aliases: ['wifi', 'wi_fi'], label: 'Wi-Fi signal', icon: { category: 'connectivity', key: 'wifi' } satisfies IconRef },
+    { channel: 'gsm', aliases: ['gsm'], label: 'GSM signal', icon: { category: 'connectivity', key: 'gsm' } satisfies IconRef },
+  ];
+  for (const definition of definitions) {
+    const matches = definition.aliases.some((alias) => [
+      `${alias}_signal`,
+      `${alias}_signal_level`,
+      `${alias}_signal_dbm`,
+    ].some((token) => hasMetricToken(descriptor, token)));
+    if (!matches) {
+      continue;
+    }
+
+    const unknown = isIgnoredMetricState(state);
+    const unit = safeString(state.attributes.unit_of_measurement);
+    const numeric = parseStateNumber(state);
+    const quality = normalizedMetricValue(state.state);
+    const knownQuality = ['no_signal', 'weak', 'normal', 'strong'].includes(quality);
+    const value = unknown
+      ? 'Unknown'
+      : numeric !== null
+        ? formatSensorState(state, unit, 0)
+        : knownQuality ? humanizeSlug(quality) : 'Unknown';
+    const tone: GlowTone = unknown || (!knownQuality && numeric === null)
+      ? 'slate'
+      : numeric !== null
+        ? signalTone(numeric, unit)
+        : quality === 'strong' ? 'green' : quality === 'normal' ? 'cyan' : quality === 'weak' ? 'amber' : 'red';
+    return {
+      id: `metric:${entry.entity_id}`,
+      kind: `hub_${definition.channel}_signal`,
+      label: definition.label,
+      value,
+      icon: definition.icon,
+      tone,
+      priority: numeric !== null ? 31 : 32,
+    };
+  }
+
+  return null;
+}
+
+function hubJewellerDiagnosticMetricCandidate(
+  entry: HomeAssistantEntityEntry,
+  state: HomeAssistantState,
+  deviceType?: string,
+): MetricCandidate | null {
+  if (deviceType !== 'hub') {
+    return null;
+  }
+
+  const descriptor = normalizedMetricDescriptor(entry, state);
+  const unknown = isIgnoredMetricState(state);
+
+  if (hasMetricToken(descriptor, 'radio_connection') || hasMetricToken(descriptor, 'jeweller_connection')) {
+    const connected = binaryObservationState(state.state);
+    return {
+      id: `metric:${entry.entity_id}`,
+      kind: 'hub_jeweller_link',
+      label: 'Jeweller link',
+      value: connected === null ? 'Unknown' : connected ? 'Connected' : 'Disconnected',
+      icon: { category: 'sensors', key: 'signal' },
+      tone: connected === null ? 'slate' : connected ? 'green' : 'amber',
+      priority: 13,
+    };
+  }
+
+  if (hasMetricToken(descriptor, 'jeweller_antenna_status')) {
+    const antennaState = normalizedMetricValue(state.state).replace(/^antenna_/, '');
+    const known = ['connected', 'disconnected', 'damaged'].includes(antennaState);
+    return {
+      id: `metric:${entry.entity_id}`,
+      kind: 'hub_jeweller_antenna',
+      label: 'Jeweller antenna',
+      value: known ? humanizeSlug(antennaState) : 'Unknown',
+      icon: { category: 'sensors', key: 'signal' },
+      tone: antennaState === 'connected' ? 'green' : antennaState === 'damaged' ? 'red' : antennaState === 'disconnected' ? 'amber' : 'slate',
+      priority: 17,
+    };
+  }
+
+  if (hasMetricToken(descriptor, 'jeweller_interference')) {
+    const detected = binaryObservationState(state.state);
+    return {
+      id: `metric:${entry.entity_id}`,
+      kind: 'hub_jeweller_interference',
+      label: 'Jeweller interference',
+      value: detected === null ? 'Unknown' : detected ? 'Detected' : 'Clear',
+      icon: { category: 'sensors', key: 'noise' },
+      tone: detected === null ? 'slate' : detected ? 'amber' : 'green',
+      priority: 18,
+    };
+  }
+
+  for (const channel of ['1', '2'] as const) {
+    if (hasMetricToken(descriptor, `jeweller_noise_channel_${channel}`)) {
+      return {
+        id: `metric:${entry.entity_id}`,
+        kind: `hub_jeweller_noise_${channel}`,
+        label: `Jeweller noise ${channel}`,
+        value: unknown ? 'Unknown' : formatSensorState(state, safeString(state.attributes.unit_of_measurement), 0),
+        icon: { category: 'sensors', key: 'noise' },
+        tone: unknown ? 'slate' : 'cyan',
+        priority: 46 + Number(channel),
+      };
+    }
+  }
+
+  if (hasMetricToken(descriptor, 'wings_noise')) {
+    return {
+      id: `metric:${entry.entity_id}`,
+      kind: 'hub_wings_noise',
+      label: 'Wings noise',
+      value: unknown ? 'Unknown' : formatSensorState(state, safeString(state.attributes.unit_of_measurement), 0),
+      icon: { category: 'sensors', key: 'noise' },
+      tone: unknown ? 'slate' : 'cyan',
+      priority: 48,
+    };
+  }
+
+  if (hasMetricToken(descriptor, 'jeweller_lost_heartbeats_threshold')) {
+    return {
+      id: `metric:${entry.entity_id}`,
+      kind: 'hub_jeweller_heartbeat_limit',
+      label: 'Jeweller heartbeat limit',
+      value: unknown ? 'Unknown' : formatSensorState(state, safeString(state.attributes.unit_of_measurement), 0),
+      icon: { category: 'sensors', key: 'signal' },
+      tone: unknown ? 'slate' : 'cyan',
+      priority: 49,
+    };
+  }
+
+  if (hasMetricToken(descriptor, 'jeweller_ping_interval')) {
+    return {
+      id: `metric:${entry.entity_id}`,
+      kind: 'hub_jeweller_ping_interval',
+      label: 'Jeweller ping interval',
+      value: unknown ? 'Unknown' : formatSensorState(state, safeString(state.attributes.unit_of_measurement), 0),
+      icon: { category: 'sensors', key: 'signal' },
+      tone: unknown ? 'slate' : 'cyan',
+      priority: 50,
+    };
+  }
+
+  return null;
+}
+
+function normalizedMetricDescriptor(entry: HomeAssistantEntityEntry, state: HomeAssistantState): string {
+  return entityDescriptorText(entry, state)
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function normalizedMetricValue(value: unknown): string {
+  return safeString(value)
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function hasMetricToken(descriptor: string, token: string): boolean {
+  return new RegExp(`(?:^|_)${token}(?:_|$)`).test(descriptor);
+}
+
+function binaryObservationState(value: unknown): boolean | null {
+  const normalized = normalizedMetricValue(value);
+  if (['on', 'true', '1', 'active', 'connected', 'online', 'available'].includes(normalized)) {
+    return true;
+  }
+  if (['off', 'false', '0', 'inactive', 'disconnected', 'offline'].includes(normalized)) {
+    return false;
+  }
   return null;
 }
 

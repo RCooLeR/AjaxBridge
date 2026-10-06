@@ -1,11 +1,91 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import type { DashboardChip } from '../models/dashboard';
+import type { DashboardChip, DashboardChipDetailItem, DashboardChipDetails } from '../models/dashboard';
 import { getToneClass } from '../utils/assets';
 import { Icon } from './Icon';
 
 interface SystemChipProps {
   chip: DashboardChip;
   compact?: boolean;
+}
+
+interface SystemChipDetailListsProps {
+  details: DashboardChipDetails;
+  idPrefix: string;
+}
+
+interface SystemChipDetailItemListProps {
+  items: DashboardChipDetailItem[];
+  labelledBy?: string;
+  scrollable?: boolean;
+}
+
+/* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- The bounded zone list must remain keyboard-scrollable. */
+function SystemChipDetailItemList({ items, labelledBy, scrollable = false }: SystemChipDetailItemListProps) {
+  const list = (
+    <ul
+      className="system-chip-dialog__items"
+      aria-labelledby={scrollable ? undefined : labelledBy}
+    >
+      {items.map((item) => (
+        <li
+          key={item.id}
+          className={[
+            'system-chip-dialog__item',
+            item.tone ? getToneClass(item.tone) : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+        >
+          <span className="system-chip-dialog__status" aria-hidden="true" />
+          <span className="system-chip-dialog__item-label">{item.label}</span>
+          {item.value ? <strong>{item.value}</strong> : null}
+        </li>
+      ))}
+    </ul>
+  );
+
+  if (!scrollable) {
+    return list;
+  }
+
+  return (
+    <section
+      className="system-chip-dialog__scroll-region"
+      aria-labelledby={labelledBy}
+      tabIndex={0}
+    >
+      {list}
+    </section>
+  );
+}
+/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */
+
+export function SystemChipDetailLists({ details, idPrefix }: SystemChipDetailListsProps) {
+  const sections = details.sections?.filter((section) => section.items.length > 0) ?? [];
+
+  if (sections.length === 0) {
+    return details.items.length > 0
+      ? <SystemChipDetailItemList items={details.items} />
+      : <p className="system-chip-dialog__empty">No matching devices to show.</p>;
+  }
+
+  return (
+    <div className="system-chip-dialog__sections">
+      {sections.map((section) => {
+        const titleId = `${idPrefix}-${section.id}-title`;
+        return (
+          <section key={section.id} className="system-chip-dialog__section" aria-labelledby={titleId}>
+            <h3 id={titleId} className="system-chip-dialog__section-title">{section.title}</h3>
+            <SystemChipDetailItemList
+              items={section.items}
+              labelledBy={titleId}
+              scrollable={section.scrollable}
+            />
+          </section>
+        );
+      })}
+    </div>
+  );
 }
 
 export function SystemChip({ chip, compact = false }: SystemChipProps) {
@@ -123,27 +203,7 @@ export function SystemChip({ chip, compact = false }: SystemChipProps) {
               {chip.details.summary}
             </p>
 
-            {chip.details.items.length > 0 ? (
-              <ul className="system-chip-dialog__items">
-                {chip.details.items.map((item) => (
-                  <li
-                    key={item.id}
-                    className={[
-                      'system-chip-dialog__item',
-                      item.tone ? getToneClass(item.tone) : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
-                  >
-                    <span className="system-chip-dialog__status" aria-hidden="true" />
-                    <span className="system-chip-dialog__item-label">{item.label}</span>
-                    {item.value ? <strong>{item.value}</strong> : null}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="system-chip-dialog__empty">No matching devices to show.</p>
-            )}
+            <SystemChipDetailLists details={chip.details} idPrefix={dialogId} />
           </section>
         </dialog>
       ) : null}

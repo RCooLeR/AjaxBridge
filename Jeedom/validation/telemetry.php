@@ -1,5 +1,5 @@
 <?php
-// Adapted 2026-09-25 for AjaxBridge packaging and WallSwitch unit regressions.
+// Adapted 2026-10-06 for AjaxBridge packaging, hub channels and telemetry regressions.
 // Run with: php validation/telemetry.php /path/to/complete/ajaxSystem
 // Executes the plugin's real parser/migration with a small in-memory Jeedom adapter.
 // Payloads are synthetic API examples, not recordings from a live installation.
@@ -224,6 +224,76 @@ addInfo($hub, 'externallyPowered', 'binary');
 $hub->updateData(array('state' => 2, 'hubPowered' => false), true);
 same('NIGHT_MODE', reading($hub, 'state'), 'Hub state normalization');
 same(false, reading($hub, 'externallyPowered'), 'Hub power normalization');
+
+// Hub 2 Plus active uplinks come from activeChannels. Interface-enabled fields
+// and Jeweller diagnostics remain separate facts from current cloud transport.
+$hub2Plus = new ajaxSystem('HUB_2_PLUS', 'hub');
+$existingWifiChannel = addInfo($hub2Plus, 'activeChannel::WIFI', 'binary', 'My Wi-Fi uplink', 12);
+$existingWifiChannel->setConfiguration('custom', 'keep');
+$existingWifiChannel->setIsHistorized(1);
+$existingWifiChannel->value = 1;
+$existingWifiChannelAttributes = $existingWifiChannel->attributes;
+$existingWifiChannelId = $existingWifiChannel->getId();
+$hub2Plus->ensureInfoCommands();
+same($existingWifiChannelId, $hub2Plus->getCmd('info', 'activeChannel::WIFI')->getId(), 'Hub migration preserves existing channel command ID');
+same($existingWifiChannelAttributes, $hub2Plus->getCmd('info', 'activeChannel::WIFI')->attributes, 'Hub migration preserves existing channel settings');
+same(1, reading($hub2Plus, 'activeChannel::WIFI'), 'Hub migration preserves existing channel reading');
+foreach (array('activeChannel::ETHERNET', 'activeChannel::WIFI', 'activeChannel::GSM') as $logicalId) {
+  same('binary', $hub2Plus->getCmd('info', $logicalId)->getSubType(), 'Hub active channel is binary: ' . $logicalId);
+}
+foreach (array('wifi::enabled' => 'binary', 'wifi::signalLevel' => 'string', 'noiseLevel::high' => 'binary',
+  'noiseLevel::avgValueChannel1' => 'numeric', 'noiseLevel::avgValueChannel2' => 'numeric',
+  'noiseLevel::avgValueDataChannel' => 'numeric', 'jeweller::lostHeartbeatsThreshold' => 'numeric',
+  'jeweller::detectorPingIntervalSeconds' => 'numeric') as $logicalId => $subtype) {
+  same($subtype, $hub2Plus->getCmd('info', $logicalId)->getSubType(), 'Hub diagnostic command subtype: ' . $logicalId);
+}
+same(null, $hub2Plus->getCmd('info', 'jewellerActive'), 'No fabricated Jeweller active command');
+
+$hub2Plus->refreshData(array(
+  'activeChannels' => array('ETHERNET', 'WIFI'),
+  'wifi' => array('enabled' => true, 'signalLevel' => 'STRONG'),
+  'noiseLevel' => array('high' => false, 'avgValueChannel1' => -98, 'avgValueChannel2' => -96, 'avgValueDataChannel' => -97),
+  'jeweller' => array('lostHeartbeatsThreshold' => 8, 'detectorPingIntervalSeconds' => 36)
+));
+same(1, reading($hub2Plus, 'activeChannel::ETHERNET'), 'Hub snapshot reports active Ethernet uplink');
+same(1, reading($hub2Plus, 'activeChannel::WIFI'), 'Hub snapshot reports active Wi-Fi uplink');
+same(0, reading($hub2Plus, 'activeChannel::GSM'), 'Hub snapshot clears inactive GSM uplink');
+same(true, reading($hub2Plus, 'wifi::enabled'), 'Hub Wi-Fi enabled setting');
+same('STRONG', reading($hub2Plus, 'wifi::signalLevel'), 'Hub Wi-Fi qualitative signal');
+same(false, reading($hub2Plus, 'noiseLevel::high'), 'Hub radio high-noise flag preserves false');
+same(-98, reading($hub2Plus, 'noiseLevel::avgValueChannel1'), 'Hub Jeweller channel 1 noise value');
+same(-96, reading($hub2Plus, 'noiseLevel::avgValueChannel2'), 'Hub Jeweller channel 2 noise value');
+same(-97, reading($hub2Plus, 'noiseLevel::avgValueDataChannel'), 'Hub Jeweller data-channel noise value');
+same(8, reading($hub2Plus, 'jeweller::lostHeartbeatsThreshold'), 'Hub Jeweller lost-heartbeat setting');
+same(36, reading($hub2Plus, 'jeweller::detectorPingIntervalSeconds'), 'Hub Jeweller ping interval');
+
+$hub2Plus->updateData(array('wifi' => array('signalLevel' => 'NORMAL')), true);
+same(1, reading($hub2Plus, 'activeChannel::ETHERNET'), 'Partial hub callback preserves Ethernet uplink');
+same(1, reading($hub2Plus, 'activeChannel::WIFI'), 'Partial hub callback preserves Wi-Fi uplink');
+same(0, reading($hub2Plus, 'activeChannel::GSM'), 'Partial hub callback preserves GSM uplink');
+$hub2Plus->updateData(array('activeChannels' => 'ETHERNET'), true);
+same(1, reading($hub2Plus, 'activeChannel::WIFI'), 'Malformed activeChannels string preserves uplinks');
+$hub2Plus->updateData(array('activeChannels' => null), true);
+same(1, reading($hub2Plus, 'activeChannel::WIFI'), 'Null activeChannels preserves uplinks');
+foreach (array(
+  array(123),
+  array('ETHERNET' => true),
+  array('SATELLITE'),
+  array(1 => 'ETHERNET')
+) as $invalidChannels) {
+  $hub2Plus->updateData(array('activeChannels' => $invalidChannels), true);
+  same(1, reading($hub2Plus, 'activeChannel::ETHERNET'), 'Malformed activeChannels array preserves Ethernet');
+  same(1, reading($hub2Plus, 'activeChannel::WIFI'), 'Malformed activeChannels array preserves Wi-Fi');
+}
+$hub2Plus->updateData(array('activeChannels' => array(' gsm ', 'wifi')), true);
+same(0, reading($hub2Plus, 'activeChannel::ETHERNET'), 'Updated channel list clears absent Ethernet');
+same(1, reading($hub2Plus, 'activeChannel::WIFI'), 'Channel derivation normalizes Wi-Fi token case');
+same(1, reading($hub2Plus, 'activeChannel::GSM'), 'Channel derivation normalizes GSM token whitespace');
+$hub2Plus->updateData(array('activeChannels' => array()), true);
+same(0, reading($hub2Plus, 'activeChannel::ETHERNET'), 'Empty activeChannels clears Ethernet');
+same(0, reading($hub2Plus, 'activeChannel::WIFI'), 'Empty activeChannels clears Wi-Fi');
+same(0, reading($hub2Plus, 'activeChannel::GSM'), 'Empty activeChannels clears GSM');
+
 $socket = new ajaxSystem('Socket');
 $current = addInfo($socket, 'currentMA');
 $current->setConfiguration('calculValueOffset', '#value# / 1000');

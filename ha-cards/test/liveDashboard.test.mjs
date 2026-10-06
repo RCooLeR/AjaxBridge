@@ -214,11 +214,12 @@ test('Hub overall online state is authoritative over optional transport channels
     identifiers:[['mqtt','ajaxbridge_account_a0f80d']],
   };
   const inputs = [
-    ['binary_sensor.ajax_account_a0f80d_online','on',{device_class:'connectivity'}, {unique_id:'ajaxbridge_account_a0f80d_online'}],
-    ['binary_sensor.ajax_account_a0f80d_gsm','unknown',{device_class:'connectivity',friendly_name:'GSM'}, {unique_id:'ajaxbridge_jeedom_cmd_154'}],
-    ['binary_sensor.ajax_account_a0f80d_ethernet','on',{device_class:'connectivity',friendly_name:'Ethernet'}, {unique_id:'ajaxbridge_jeedom_cmd_155'}],
-    ['binary_sensor.ajax_account_a0f80d_ethernet_connected','off',{device_class:'connectivity',friendly_name:'Ethernet connected'}, {unique_id:'ajaxbridge_jeedom_cmd_156'}],
-    ['binary_sensor.ajax_account_a0f80d_radio_connection','unknown',{device_class:'connectivity',friendly_name:'Radio connection'}, {unique_id:'ajaxbridge_jeedom_cmd_157'}],
+    ['binary_sensor.ajax_account_a0f80d_online','on',{device_class:'connectivity',device_slug:'account_a0f80d',friendly_name:'Online'}, {unique_id:'ajaxbridge_account_a0f80d_online'}],
+    ['binary_sensor.ajax_account_a0f80d_gsm','unknown',{device_class:'connectivity',device_slug:'account_a0f80d',friendly_name:'GSM'}, {unique_id:'ajaxbridge_jeedom_cmd_154'}],
+    ['sensor.ajax_account_a0f80d_signal','unknown',{device_class:'signal_strength',device_slug:'account_a0f80d',friendly_name:'Signal',unit_of_measurement:'dBm'}, {unique_id:'ajaxbridge_jeedom_cmd_155'}],
+    ['binary_sensor.ajax_account_a0f80d_cellular_data_active','on',{device_class:'connectivity',device_slug:'account_a0f80d',friendly_name:'Cellular data active'}, {unique_id:'ajaxbridge_jeedom_cmd_157'}],
+    ['binary_sensor.ajax_account_a0f80d_cms','on',{device_class:'connectivity',device_slug:'account_a0f80d',friendly_name:'CMS'}, {unique_id:'ajaxbridge_jeedom_cmd_158'}],
+    ['binary_sensor.ajax_account_a0f80d_ethernet','on',{device_class:'connectivity',device_slug:'account_a0f80d',friendly_name:'Ethernet Enabled'}, {unique_id:'ajaxbridge_jeedom_cmd_159'}],
     ['button.ajax_account_a0f80d_disarm','unknown',{friendly_name:'Disarm'}, {unique_id:'ajaxbridge_account_a0f80d_disarm'}],
   ];
   const {card} = fixture(inputs,'','',[hub]);
@@ -246,14 +247,106 @@ test('Hub overall online state is authoritative over optional transport channels
 
   inputs[0][1] = 'unknown';
   inputs.pop();
-  inputs[2][1] = 'on';
+  inputs[3][1] = 'on';
   const unknown = fixture(inputs,'','',[hub]).card;
   assert.equal(unknown.connectivity,'Unknown');
   assert.equal(unknown.isOnline,false);
   assert.equal(unknown.metrics.find((metric) => metric.label === 'Link').value,'Unknown');
 });
 
+test('Hub card keeps active uplinks separate and treats Jeweller as a radio diagnostic', () => {
+  const hub = {
+    id:'ha-account',name:'Ajax Hub 2 Plus',model:'Ajax account',manufacturer:'Ajax Systems',area_id:'room',
+    identifiers:[['mqtt','ajaxbridge_account_a0f80d']],
+  };
+  const inputs = [
+    ['binary_sensor.ajax_account_a0f80d_online','on',{device_class:'connectivity',device_slug:'account_a0f80d',friendly_name:'Online'}, {unique_id:'ajaxbridge_account_a0f80d_online'}],
+    ['binary_sensor.ajax_account_a0f80d_ethernet_active','on',{device_class:'connectivity',device_slug:'account_a0f80d',friendly_name:'Ethernet active'}, {unique_id:'ajaxbridge_jeedom_cmd_201'}],
+    ['binary_sensor.ajax_account_a0f80d_wifi_active','off',{device_class:'connectivity',device_slug:'account_a0f80d',friendly_name:'Wi-Fi active'}, {unique_id:'ajaxbridge_jeedom_cmd_202'}],
+    ['binary_sensor.ajax_account_a0f80d_gsm_active','unknown',{device_class:'connectivity',device_slug:'account_a0f80d',friendly_name:'GSM active'}, {unique_id:'ajaxbridge_jeedom_cmd_203'}],
+    ['sensor.ajax_account_a0f80d_jeweller_antenna_status','ANTENNA_DISCONNECTED',{device_slug:'account_a0f80d',friendly_name:'Jeweller antenna status'}, {unique_id:'ajaxbridge_jeedom_cmd_204'}],
+    ['sensor.ajax_account_a0f80d_wifi_signal_level','STRONG',{device_slug:'account_a0f80d',friendly_name:'Wi-Fi signal'}, {unique_id:'ajaxbridge_jeedom_cmd_207'}],
+    ['sensor.ajax_account_a0f80d_gsm_signal_level','NORMAL',{device_slug:'account_a0f80d',friendly_name:'GSM signal'}, {unique_id:'ajaxbridge_jeedom_cmd_208'}],
+    ['sensor.ajax_account_a0f80d_wings_noise','-87',{device_slug:'account_a0f80d',friendly_name:'Wings noise'}, {unique_id:'ajaxbridge_jeedom_cmd_209'}],
+    ['binary_sensor.ajax_account_a0f80d_ethernet_enabled','on',{device_slug:'account_a0f80d',friendly_name:'Ethernet enabled'}, {unique_id:'ajaxbridge_jeedom_cmd_205'}],
+    ['binary_sensor.ajax_account_a0f80d_cellular_data_enabled','on',{device_slug:'account_a0f80d',friendly_name:'Cellular data enabled'}, {unique_id:'ajaxbridge_jeedom_cmd_206'}],
+    ['button.ajax_account_a0f80d_disarm','unknown',{device_slug:'account_a0f80d',friendly_name:'Disarm'}, {unique_id:'ajaxbridge_account_a0f80d_disarm'}],
+  ];
+
+  const {card} = fixture(inputs,'','',[hub]);
+  const metric = (label) => card.metrics.find((item) => item.label === label);
+  assert.deepEqual(
+    ['Link','Ethernet','GSM','Wi-Fi','Jeweller antenna'].map((label) => [label,metric(label)?.value,metric(label)?.tone]),
+    [
+      ['Link','Online','green'],
+      ['Ethernet','Active','green'],
+      ['GSM','Unknown','slate'],
+      ['Wi-Fi','Inactive','slate'],
+      ['Jeweller antenna','Disconnected','amber'],
+    ],
+  );
+  assert.deepEqual(
+    ['Wi-Fi signal','GSM signal','Wings noise'].map((label) => [label,metric(label)?.value,metric(label)?.tone]),
+    [
+      ['Wi-Fi signal','Strong','green'],
+      ['GSM signal','Normal','cyan'],
+      ['Wings noise','-87','cyan'],
+    ],
+  );
+  assert.equal(card.metrics.some((item) => item.label === 'Signal'),false);
+  assert.equal(card.metrics.filter((item) => item.label === 'Link').length,1);
+  assert.equal(card.connectivity,'Online');
+  assert.equal(card.isOnline,true);
+  assert.equal(card.attention,false);
+
+  const markup = render(card).grid;
+  for (const label of ['Link','Ethernet','GSM','Wi-Fi','Jeweller antenna']) assert.match(markup,new RegExp(`>${label}<`));
+  assert.match(markup,/>More</);
+
+  inputs[0][1] = 'off';
+  const offline = fixture(inputs,'','',[hub]).card;
+  assert.equal(offline.connectivity,'Offline');
+  assert.equal(offline.isOnline,false);
+  assert.equal(offline.metrics.find((item) => item.label === 'Link').value,'Offline');
+  assert.equal(offline.metrics.find((item) => item.label === 'Ethernet').value,'Last known active');
+  assert.equal(offline.metrics.find((item) => item.label === 'Ethernet').tone,'slate');
+  assert.equal(offline.metrics.find((item) => item.label === 'Wi-Fi').value,'Last known inactive');
+
+  inputs[0][1] = 'unknown';
+  const unknown = fixture(inputs,'','',[hub]).card;
+  assert.equal(unknown.connectivity,'Unknown');
+  assert.equal(unknown.metrics.find((item) => item.label === 'Ethernet').value,'Last known active');
+  assert.equal(unknown.metrics.find((item) => item.label === 'Ethernet').tone,'slate');
+});
+
+test('Hub card never invents missing transport or Jeweller metrics', () => {
+  const hub = {
+    id:'ha-account',name:'Ajax Hub',model:'Ajax account',manufacturer:'Ajax Systems',area_id:'room',
+    identifiers:[['mqtt','ajaxbridge_account_a0f80d']],
+  };
+  const {card} = fixture([
+    ['binary_sensor.ajax_account_a0f80d_online','on',{device_class:'connectivity',device_slug:'account_a0f80d',friendly_name:'Online'}, {unique_id:'ajaxbridge_account_a0f80d_online'}],
+    ['binary_sensor.ajax_account_a0f80d_ethernet_active','off',{device_class:'connectivity',device_slug:'account_a0f80d',friendly_name:'Ethernet active'}, {unique_id:'ajaxbridge_jeedom_cmd_211'}],
+    ['button.ajax_account_a0f80d_disarm','unknown',{device_slug:'account_a0f80d',friendly_name:'Disarm'}, {unique_id:'ajaxbridge_account_a0f80d_disarm'}],
+  ],'','',[hub]);
+  const labels = card.metrics.map((item) => item.label);
+  assert.deepEqual(labels,['Link','Ethernet']);
+  assert.equal(card.metrics.find((item) => item.label === 'Ethernet').value,'Inactive');
+  for (const absent of ['Wi-Fi','GSM','Jeweller link','Jeweller antenna','Jeweller interference']) {
+    assert.equal(labels.includes(absent),false,absent);
+  }
+});
+
 test('redundant connectivity channels stay online when any known channel is connected', () => {
+  const authoritative = fixture([
+    ['binary_sensor.detector_online','on',{device_class:'connectivity'}],
+    ['binary_sensor.detector_ethernet_connected','off',{device_class:'connectivity'}],
+    ['binary_sensor.detector_radio_connection','unknown',{device_class:'connectivity'}],
+  ]).card;
+  assert.equal(authoritative.connectivity,'Online');
+  assert.equal(authoritative.isOnline,true);
+  assert.equal(authoritative.metrics.find((metric) => metric.label === 'Link').value,'Online');
+
   const connected = fixture([
     ['binary_sensor.detector_ethernet_connected','on',{device_class:'connectivity'}],
     ['binary_sensor.detector_radio_connection','unknown',{device_class:'connectivity'}],
@@ -314,21 +407,31 @@ test('WallSwitch lighting role stays in full product power inventory; foreign na
   assert.equal(data.devices.find((item) => item.name === 'Garage light').type,'wall_switch');
 });
 
-test('summary chip details explain analytics totals and per-room counts', () => {
+test('analytics chip details separate event types from scrollable zone groups', () => {
   const {data}=fixture([['sensor.detector_battery','100',{device_class:'battery'}]], 'MotionProtect', 'Detector', undefined, [], {
     room:{total:14,human:7,vehicle:3,animal:2,ivs:2},
   });
   const smd=chip(data,'system-smd');
   assert.equal(smd.value,'12');
   assert.deepEqual(
-    smd.details.items.slice(0,3).map((item)=>[item.label,item.value]),
+    smd.details.sections.map((section)=>[section.title,section.scrollable??false]),
+    [['Event types',false],['Zones',true]],
+  );
+  assert.deepEqual(
+    smd.details.sections[0].items.map((item)=>[item.label,item.value]),
     [['People','7'],['Vehicles','3'],['Animals','2']],
   );
-  assert.ok(smd.details.items.some((item)=>item.label==='Room: Room'&&item.value==='12'));
+  assert.deepEqual(smd.details.sections[1].items.map((item)=>[item.label,item.value]),[['Room','12']]);
+  assert.equal(smd.details.items.some((item)=>item.label.startsWith('Room:')),false);
   const ivs=chip(data,'system-ivs');
   assert.equal(ivs.value,'2');
   assert.ok(ivs.details.summary.includes('Tripwire'));
-  assert.deepEqual(ivs.details.items.map((item)=>[item.label,item.value]),[['Room','2']]);
+  assert.deepEqual(
+    ivs.details.sections.map((section)=>[section.title,section.scrollable??false]),
+    [['Event types',false],['Zones',true]],
+  );
+  assert.deepEqual(ivs.details.sections[0].items.map((item)=>[item.label,item.value]),[['Tripwire / intrusion events','2']]);
+  assert.deepEqual(ivs.details.sections[1].items.map((item)=>[item.label,item.value]),[['Room','2']]);
 });
 
 test('summary chips render only when their backing source is configured or discovered', () => {
@@ -366,6 +469,8 @@ test('summary chips render only when their backing source is configured or disco
   const analytics = fixture([['camera.front','streaming']], '', '', [dahuaCamera], [], {}, true).data;
   assert.equal(chip(analytics,'system-smd').value,'0');
   assert.equal(chip(analytics,'system-ivs').value,'0');
+  assert.deepEqual(chip(analytics,'system-smd').details.sections.map((section)=>section.title),['Event types']);
+  assert.deepEqual(chip(analytics,'system-ivs').details.sections.map((section)=>section.title),['Event types']);
 });
 
 test('security mode requires a live account state and represents unavailable values as unknown', () => {
