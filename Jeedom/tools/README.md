@@ -1,5 +1,7 @@
 # Electrical command audit
 
+For a fresh apartment instance, see [setup and SIA instructions](../APARTMENT_SETUP.md). The offline [patch installer](install-patch.sh) validates the full bundle and compatible installed Ajax Systems files before applying the overlay, and creates an original-plugin backup. Run `--check` first and disable the plugin before `--apply`; it never loads the real Jeedom core or runs synchronization.
+
 Run this standalone helper **inside the existing Jeedom host or container**, using the same PHP user and installation root as Jeedom:
 
 ```sh

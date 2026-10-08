@@ -67,6 +67,9 @@ jobs:
       - name: Validate electrical audit with offline stubs
         run: php -n Jeedom/validation/electrical-contract-audit.php
 
+      - name: Test safe offline patch installer
+        run: sudo php -n scripts/test_install_jeedom_patch.php
+
       - name: Test standalone archive packaging
         run: python3 -m unittest discover -s scripts -p 'test_package_jeedom.py' -v
 
