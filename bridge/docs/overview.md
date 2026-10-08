@@ -62,21 +62,27 @@ go build ./cmd/ajaxbridge
 
 | Variable | Default | Description |
 | --- | --- | --- |
+| `AJAXBRIDGE_SOURCE_ID` | empty | Stable installation namespace, for example `apartment`. Empty preserves legacy identities. See [multiple installations](./multiple-installations.md). |
 | `AJAXBRIDGE_SIA_ADDR` | `:8099` | SIA TCP listen address. |
 | `AJAXBRIDGE_HTTP_ADDR` | `:8080` | HTTP listen address. |
 | `AJAXBRIDGE_ACCOUNT` | empty | Expected Ajax account/object number. Empty accepts all accounts. |
 | `AJAXBRIDGE_ENCRYPTION_KEY` | empty | Optional SIA AES key. |
 | `AJAXBRIDGE_STRICT_CRC` | `true` | Reject frames with invalid CRC. |
-| `AJAXBRIDGE_DEVICES_PATH` | `data/devices.json` | Device catalog path. |
+| `AJAXBRIDGE_DEVICES_PATH` | `data/devices.json` | Device catalog file base; a configured source ID inserts a source directory before the filename. |
 | `AJAXBRIDGE_MQTT_BROKER` | empty | MQTT broker URL. Enables MQTT when set. |
-| `AJAXBRIDGE_MQTT_TOPIC_PREFIX` | `ajaxbridge` | MQTT state prefix. |
+| `AJAXBRIDGE_MQTT_CLIENT_ID` | `ajaxbridge` | MQTT client ID base; a configured source ID appends `-{source_id}`. |
+| `AJAXBRIDGE_MQTT_TOPIC_PREFIX` | `ajaxbridge` | MQTT state prefix base; a configured source ID appends `/{source_id}`. |
 | `AJAXBRIDGE_MQTT_DISCOVERY` | `true` | Publish Home Assistant discovery when MQTT is enabled. |
 | `AJAXBRIDGE_JEEDOM_ENABLED` | `false` | Enable Jeedom MQTT input. |
-| `AJAXBRIDGE_JEEDOM_STORE_PATH` | `data/jeedom.json` | Persist discovered Jeedom commands and last values so HA discovery/state can be republished after bridge restarts. |
+| `AJAXBRIDGE_JEEDOM_STORE_PATH` | `data/jeedom.json` | Jeedom cache file base; a configured source ID inserts a source directory before the filename. Preserves discovered commands/values for republishing after restarts. |
 | `AJAXBRIDGE_FORWARD_ADDR` | empty | Optional comma-separated raw SIA forward targets. |
-| `AJAXBRIDGE_NOTIFICATIONS_PATH` | `data/notifications.json` | Notification channel/rule config path. |
+| `AJAXBRIDGE_NOTIFICATIONS_PATH` | `data/notifications.json` | Notification config file base; a configured source ID inserts a source directory before the filename. |
 
 Legacy `AJAX2PROM_*` variables are still accepted as compatibility aliases.
+
+Configure a source ID before the first MQTT discovery for a new installation. One bridge consumes one Jeedom source. Multiple bridges require separate data directories and Jeedom MQTT Manager roots; separate Ajax account numbers alone do not isolate Jeedom command IDs. Explicit Jeedom input/control topics override their source-derived defaults. Outgoing MQTT client/state settings are bases and still receive the configured source suffix.
+
+Data file paths are scoped after environment/CLI parsing too: `/data/devices.json` becomes `/data/apartment/devices.json` for source `apartment`. Jeedom cache and notification files follow the same rule; an enabled sample directory appends `/apartment`. Empty source preserves all legacy paths. The namespaced admin panel displays its source, and HTTP responses identify it through `X-AjaxBridge-Source-ID`.
 
 ## HTTP Endpoints
 
@@ -108,6 +114,8 @@ Legacy `AJAX2PROM_*` variables are still accepted as compatibility aliases.
 | `data/notifications.json` | Notification channels and rules. |
 | `tmp-jeedom/*.json` | Optional raw Jeedom MQTT sample envelopes when `AJAXBRIDGE_JEEDOM_SAMPLE_DIR` is set. Disabled by default for production. |
 
+The table shows empty-source paths. Namespaced installations insert their source directory before each configured data filename and append it to an enabled debug sample directory. Use the effective paths shown in `/admin` when editing or backing up a namespaced installation.
+
 ## CI
 
 Every pushed branch and pull request runs the `ci` GitHub Actions workflow:
@@ -118,6 +126,8 @@ Every pushed branch and pull request runs the `ci` GitHub Actions workflow:
 Release packaging remains in the tag-only `release` workflow.
 
 ## Recommended Setup Order
+
+For a second installation, first choose its source ID, private data directory, and Jeedom MQTT Manager root using the [multiple-installations guide](./multiple-installations.md).
 
 1. Run AjaxBridge with SIA only and confirm `/state` receives Ajax events.
 2. Edit `data/devices.json` with stable device names, rooms, kinds, and expected signals.

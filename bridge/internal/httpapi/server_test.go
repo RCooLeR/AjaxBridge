@@ -1,15 +1,46 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/RCooLeR/AjaxBridge/internal/devicecatalog"
+	"github.com/RCooLeR/AjaxBridge/internal/state"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+func TestAdminBootstrapSourceMetadataPreservesLegacy(t *testing.T) {
+	for _, sourceID := range []string{"", "apartment"} {
+		catalog := devicecatalog.Empty()
+		server := &Server{state: state.NewEngine(time.Minute, catalog), devices: catalog}
+		server.SetSourceID(sourceID)
+		recorder := httptest.NewRecorder()
+		server.adminBootstrap(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/bootstrap", nil))
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		raw, found := payload["source_id"]
+		if found != (sourceID != "") {
+			t.Fatalf("source %q: metadata present=%t", sourceID, found)
+		}
+		if found && string(raw) != `"apartment"` {
+			t.Fatalf("source metadata = %s", raw)
+		}
+	}
+	for _, want := range []string{`id="sourceBadge"`, "sourceBadge.textContent", "sourceBadge.classList.toggle('d-none', !model.source_id)"} {
+		if !strings.Contains(adminHTML, want) {
+			t.Errorf("admin HTML missing source display %q", want)
+		}
+	}
+}
 
 func TestMetricsNegotiatesOpenMetricsWithoutChangingLegacyScrapes(t *testing.T) {
 	registry := prometheus.NewRegistry()
@@ -33,6 +64,15 @@ func TestMetricsNegotiatesOpenMetricsWithoutChangingLegacyScrapes(t *testing.T) 
 		}
 		if !strings.Contains(rec.Body.String(), "ajax_test_value 23.5") || strings.Contains(rec.Body.String(), "# EOF") != tc.openMetrics {
 			t.Fatalf("Accept %q: unexpected metrics body %q", tc.accept, rec.Body.String())
+		}
+		varyAccept := false
+		for _, value := range rec.Header().Values("Vary") {
+			for _, field := range strings.Split(value, ",") {
+				varyAccept = varyAccept || strings.EqualFold(strings.TrimSpace(field), "Accept")
+			}
+		}
+		if !varyAccept {
+			t.Fatalf("negotiated metrics must vary on Accept for proxy caches: %v", rec.Header().Values("Vary"))
 		}
 	}
 }

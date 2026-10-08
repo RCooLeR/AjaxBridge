@@ -2,6 +2,8 @@
 
 This project keeps SIA as the authoritative security source and uses Jeedom as an optional source for extra metrics and safe controls. The surfaces below are treated as compatibility contracts: change them only with tests and migration notes.
 
+The identity/topic examples below describe the legacy contract with empty `AJAXBRIDGE_SOURCE_ID`. A nonempty source ID creates a separate installation namespace for MQTT, HA discovery/entity/device identities, and a `source_id` Prometheus label. Outgoing client/topic environment values are bases to which the source suffix is appended; explicitly configured external Jeedom input/control topics remain unchanged. Local Ajax accounts/zones and raw Jeedom IDs are never renumbered. See [multiple installations](./multiple-installations.md) before introducing or changing a source ID on a populated installation.
+
 ## HTTP JSON
 
 - `GET /state` returns the current SIA-derived snapshot with `accounts` and `zones`.
@@ -10,6 +12,8 @@ This project keeps SIA as the authoritative security source and uses Jeedom as a
 - `GET /api/admin/bootstrap` combines current state, catalog, Jeedom mirror data, notifications, and file paths for the admin UI.
 
 JSON field names are snake_case and should remain stable because the admin UI, Home Assistant cards, scripts, and troubleshooting workflows depend on them.
+
+A namespaced bridge identifies HTTP responses with `X-AjaxBridge-Source-ID`; `/api/admin/bootstrap` also includes `source_id`, and `/admin` displays a source badge. Effective catalog/cache/notification paths insert the source directory before the filename; debug sample directories append the source. Resolution follows environment/CLI parsing, including explicit base overrides. Empty source ID preserves the legacy response and path behavior.
 
 ## MQTT State
 
@@ -52,3 +56,5 @@ The Home Assistant cards consume Home Assistant device/entity registries and sta
 Card-facing models live in `ha-cards/src/models/dashboard.ts`; keep those TypeScript shapes in sync with any bridge output or Home Assistant discovery changes.
 
 Home Assistant cards should use the dedicated entity states for dynamic values. Compact entity attributes retain stable identity and classification fields such as `account`, `zone`, `kind`, `device_slug`, and `jeedom_device_type`. Full Jeedom command/action details remain available through HTTP JSON and the unchanged MQTT `/state` payload.
+
+Namespaced entity metadata includes `source_id`. Cards with a nonempty source filter select only matching Ajax devices and exclude missing/foreign source metadata. Omitting or leaving the filter empty selects legacy Ajax devices only. Account/area filters can further narrow the installation. Ancillary data in a namespaced card requires matching source metadata or explicitly selected areas; legacy ancillary behavior is preserved unless narrowed by areas.

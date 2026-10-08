@@ -54,6 +54,8 @@ Environment variable:
 AJAXBRIDGE_NOTIFICATIONS_PATH: "/data/notifications.json"
 ```
 
+This is a file base. With `AJAXBRIDGE_SOURCE_ID=apartment`, the effective path is `/data/apartment/notifications.json`, including when set through an explicit environment or CLI override. Empty source preserves the original path. Each installation has its own notification rules and channel configuration; see [multiple installations](./multiple-installations.md).
+
 An example file is available at:
 
 ```text

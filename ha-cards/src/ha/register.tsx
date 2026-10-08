@@ -66,6 +66,7 @@ abstract class ReactHomeAssistantElement<TConfig> extends HTMLElement {
 
 class AjaxBridgeDetailedCard extends ReactHomeAssistantElement<AjaxBridgeDetailedCardConfig> {
   setConfig(config: AjaxBridgeDetailedCardConfig) {
+    validateScopeConfig(config);
     this.configValue = config;
     this.style.height = '100%';
     this.renderReact();
@@ -93,6 +94,8 @@ class AjaxBridgeDetailedCard extends ReactHomeAssistantElement<AjaxBridgeDetaile
           initialRoomId={config.default_room}
           hass={this.hassValue}
           account={config.account}
+          sourceId={config.source_id}
+          areaIds={config.area_ids}
           dahuaBase={config.dahua_base}
           gridPowerAlarmEntities={config.grid_power_alarm_entities}
         />
@@ -109,6 +112,7 @@ class AjaxBridgeDetailedCard extends ReactHomeAssistantElement<AjaxBridgeDetaile
 
 class AjaxBridgeChipsCard extends ReactHomeAssistantElement<AjaxBridgeChipsCardConfig> {
   setConfig(config: AjaxBridgeChipsCardConfig) {
+    validateScopeConfig(config);
     if (config.max_chips !== undefined && config.max_chips < 1) {
       throw new Error('max_chips must be greater than 0');
     }
@@ -139,6 +143,8 @@ class AjaxBridgeChipsCard extends ReactHomeAssistantElement<AjaxBridgeChipsCardC
           maxChips={config.max_chips}
           hass={this.hassValue}
           account={config.account}
+          sourceId={config.source_id}
+          areaIds={config.area_ids}
           dahuaBase={config.dahua_base}
           gridPowerAlarmEntities={config.grid_power_alarm_entities}
         />
@@ -150,6 +156,16 @@ class AjaxBridgeChipsCard extends ReactHomeAssistantElement<AjaxBridgeChipsCardC
     return {
       max_chips: 7,
     };
+  }
+}
+
+function validateScopeConfig(config: { source_id?: string; area_ids?: readonly string[] }) {
+  if (config.source_id !== undefined && typeof config.source_id !== 'string') {
+    throw new Error('source_id must be a string');
+  }
+  if (config.area_ids !== undefined
+    && (!Array.isArray(config.area_ids) || config.area_ids.some((areaId) => typeof areaId !== 'string' || !areaId.trim()))) {
+    throw new Error('area_ids must be a list of nonempty Home Assistant area IDs');
   }
 }
 

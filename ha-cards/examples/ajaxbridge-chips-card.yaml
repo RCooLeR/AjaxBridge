@@ -1,5 +1,9 @@
 type: custom:ajaxbridge-chips-card
 max_chips: 7
+# For an additional installation, match its AJAXBRIDGE_SOURCE_ID:
+# source_id: apartment
+# Use stable HA area IDs to limit ancillary cameras and climate sources:
+# area_ids: [apartment_kitchen, apartment_hall]
 dahua_base: https://ha.example.test/dahua-bridge
 grid_power_alarm_entities:
   - "ajaxbridge_jeedom_sia_<account>_zone_<zone>_input_alarm"

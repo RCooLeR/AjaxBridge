@@ -27,9 +27,41 @@ function normalized(value: unknown): string {
   return text(value).normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '');
 }
 
+/** Source prefixes are part of identity; an omitted prefix is the legacy installation. */
+export function ajaxIdentity(value: unknown): { identity: string; sourceId: string } | null {
+  const raw = text(value);
+  const separator = raw.indexOf(':ajaxbridge_');
+  if (separator > 0 && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(raw.slice(0, separator))) {
+    return { identity: raw.slice(separator + 1), sourceId: raw.slice(0, separator) };
+  }
+  return /^ajaxbridge_/i.test(raw) ? { identity: raw, sourceId: '' } : null;
+}
+
+export function ajaxSourceId(uniqueId: unknown, attributes: Record<string, unknown> = {}, identifiers: string[] = []): string {
+  const uniqueSource = ajaxIdentity(uniqueId)?.sourceId;
+  if (uniqueSource) return uniqueSource;
+  const attributeSource = text(attributes.source_id);
+  if (attributeSource) return attributeSource;
+  return identifiers.map((identifier) => ajaxIdentity(identifier)?.sourceId).find(Boolean) ?? '';
+}
+
+function sourceOwner(owner: string, sourceId: string): string {
+  return sourceId ? `${sourceId}::${owner}` : owner;
+}
+
+export function ajaxOwnerIdentity(owner: string): string {
+  const separator = owner.lastIndexOf('::');
+  return separator < 0 ? owner : owner.slice(separator + 2);
+}
+
+export function ajaxOwnerAccount(owner: string): string | null {
+  const identity = ajaxOwnerIdentity(owner);
+  return identity.match(/^sia_(.+)_zone_\d+$/)?.[1] ?? identity.match(/^account_(.+)$/)?.[1] ?? null;
+}
+
 /** Display names and HA-generated numeric suffixes are fallbacks, never identities. */
 export function ajaxEntitySemantic(entry: { entity_id: string; unique_id?: string | null; name?: string | null; original_name?: string | null }, attributes: Record<string, unknown> = {}): string | null {
-  const unique = text(entry.unique_id).toLowerCase();
+  const unique = (ajaxIdentity(entry.unique_id)?.identity ?? text(entry.unique_id)).toLowerCase();
   const stable = unique.match(/^ajaxbridge_(?:zone_[^_]+_\d+|account_[^_]+)_(.+)$/)?.[1];
   if (stable) return canonicalSemantic(stable);
   for (const value of [attributes.metric, attributes.logical_id, entry.original_name, entry.name, attributes.friendly_name, entry.entity_id.split('.').slice(1).join('.')]) {
@@ -66,20 +98,24 @@ function canonicalSemantic(value: string): string {
 }
 
 export function ajaxEntityOwner(uniqueId: unknown, attributes: Record<string, unknown>): string | null {
-  const sia = text(uniqueId).match(/^ajaxbridge_zone_([^_]+)_(\d+)_/i);
-  if (sia) return `sia_${sia[1].toLowerCase()}_zone_${sia[2]}`;
+  const identity = ajaxIdentity(uniqueId);
+  const sourceId = ajaxSourceId(uniqueId, attributes);
+  const sia = text(identity?.identity).match(/^ajaxbridge_zone_([^_]+)_(\d+)_/i);
+  if (sia) return sourceOwner(`sia_${sia[1].toLowerCase()}_zone_${sia[2]}`, sourceId);
   const slug = text(attributes.device_slug).toLowerCase();
-  if (/^(?:sia_[^_]+_zone_\d+|account_[^_]+)$/.test(slug)) return slug;
-  const account = text(uniqueId).match(/^ajaxbridge_account_([^_]+)_/i);
-  return account ? `account_${account[1].toLowerCase()}` : null;
+  if (/^(?:sia_[^_]+_zone_\d+|account_[^_]+)$/.test(slug)) return sourceOwner(slug, sourceId);
+  const account = text(identity?.identity).match(/^ajaxbridge_account_([^_]+)_/i);
+  return account ? sourceOwner(`account_${account[1].toLowerCase()}`, sourceId) : null;
 }
 
 export function ajaxRegistryOwner(identifiers: string[]): string | null {
   for (const identifier of identifiers) {
-    const zone = identifier.match(/^ajaxbridge_([^_]+)_zone_(\d+)$/i);
-    if (zone) return `sia_${zone[1].toLowerCase()}_zone_${zone[2]}`;
-    const account = identifier.match(/^ajaxbridge_account_([^_]+)$/i);
-    if (account) return `account_${account[1].toLowerCase()}`;
+    const identity = ajaxIdentity(identifier);
+    if (!identity) continue;
+    const zone = identity.identity.match(/^ajaxbridge_([^_]+)_zone_(\d+)$/i);
+    if (zone) return sourceOwner(`sia_${zone[1].toLowerCase()}_zone_${zone[2]}`, identity.sourceId);
+    const account = identity.identity.match(/^ajaxbridge_account_([^_]+)$/i);
+    if (account) return sourceOwner(`account_${account[1].toLowerCase()}`, identity.sourceId);
   }
   return null;
 }

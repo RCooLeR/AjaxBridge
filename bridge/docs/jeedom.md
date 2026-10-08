@@ -59,7 +59,7 @@ In MQTT Manager:
    - Local broker installs/configures Mosquitto on the Jeedom host.
    - Remote broker connects Jeedom to an existing broker, for example `mqtt://192.168.1.10:1883`.
 2. Configure authentication.
-3. Keep or set the Jeedom root topic. AjaxBridge defaults to `jeedom`.
+3. Keep or set the Jeedom root topic. AjaxBridge defaults to `jeedom` for an empty source ID. For `AJAXBRIDGE_SOURCE_ID=apartment`, set MQTT Manager `root_topic` to `jeedom_apartment`; see [multiple installations](./multiple-installations.md).
 4. Enable transmitting Jeedom command events over MQTT.
 5. Configure the publication template as JSON so command events are parseable by AjaxBridge:
 
@@ -78,6 +78,8 @@ jeedom/cmd/set/<cmd_id>     # Action execution topic used by controls
 ```
 
 Do not subscribe AjaxBridge to broad topics like `jeedom/#` unless you know all payloads are JSON command events. Broad subscriptions can include status strings such as `online`, which produce JSON parse warnings.
+
+Each Jeedom on a shared broker needs a distinct root. One bridge consumes one Jeedom installation, with its own data/cache directory. Raw command and equipment IDs may overlap across Jeedom databases; assigning a high starting ID such as `10000` does not replace topic and Home Assistant identity isolation.
 
 ### Ajax System Plugin
 
@@ -133,25 +135,28 @@ Variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
+| `AJAXBRIDGE_SOURCE_ID` | empty | Installation namespace. A nonempty value derives separate Jeedom MQTT defaults and namespaces outgoing HA identities and Prometheus metrics. Configure before first discovery. |
 | `AJAXBRIDGE_JEEDOM_ENABLED` | `false` | Enables Jeedom MQTT input. |
-| `AJAXBRIDGE_JEEDOM_EVENT_TOPIC` | `jeedom/cmd/event/#` | Jeedom event subscription. |
-| `AJAXBRIDGE_JEEDOM_DISCOVERY_TOPIC` | `jeedom/discovery/eqLogic/#` | Jeedom eqLogic discovery subscription. |
-| `AJAXBRIDGE_JEEDOM_STATE_TOPIC_PREFIX` | `ajaxbridge/jeedom` | Normalized Jeedom state topic prefix. |
+| `AJAXBRIDGE_JEEDOM_EVENT_TOPIC` | `jeedom/cmd/event/#` | Jeedom event subscription. With a source ID, defaults to `jeedom_{source_id}/cmd/event/#`. Explicit overrides remain unchanged. |
+| `AJAXBRIDGE_JEEDOM_DISCOVERY_TOPIC` | `jeedom/discovery/eqLogic/#` | Jeedom eqLogic discovery subscription. With a source ID, defaults to `jeedom_{source_id}/discovery/eqLogic/#`. Explicit overrides remain unchanged. |
+| `AJAXBRIDGE_JEEDOM_STATE_TOPIC_PREFIX` | `ajaxbridge/jeedom` | Normalized state base. A configured source ID appends `/{source_id}`, producing `ajaxbridge/jeedom/apartment` for source `apartment`. Explicit bases follow the same rule. |
 | `AJAXBRIDGE_JEEDOM_DISCOVERY` | same as MQTT discovery | Publishes HA discovery for Jeedom values. |
 | `AJAXBRIDGE_JEEDOM_EMPTY_VALUE_POLICY` | `keep_last` | `keep_last` or `unknown`. |
 | `AJAXBRIDGE_JEEDOM_RETAIN_STATE` | `true` | Retain normalized Jeedom state messages. |
 | `AJAXBRIDGE_JEEDOM_RETAIN_DISCOVERY` | `true` | Retain Jeedom HA discovery configs. |
-| `AJAXBRIDGE_JEEDOM_STORE_PATH` | `data/jeedom.json` | Persists discovered Jeedom commands and last values so AjaxBridge can republish HA discovery/state after restart without forcing Jeedom MQTT discovery again. Empty keeps Jeedom data in memory only. |
-| `AJAXBRIDGE_JEEDOM_SAMPLE_DIR` | empty | Raw Jeedom MQTT sample capture directory. Empty disables capture. Leave empty in production. |
+| `AJAXBRIDGE_JEEDOM_STORE_PATH` | `data/jeedom.json` | Cache file base; a configured source ID inserts a source directory, e.g. `data/apartment/jeedom.json`. Persists commands and values for republishing after restarts. Empty keeps data in memory only. |
+| `AJAXBRIDGE_JEEDOM_SAMPLE_DIR` | empty | Raw sample directory base; an enabled directory receives `/{source_id}`. Empty disables capture. Leave empty in production. |
 | `AJAXBRIDGE_JEEDOM_DISCOVER_UNLINKED` | `false` | Publish HA discovery for Jeedom devices not linked to SIA catalog devices. |
 | `AJAXBRIDGE_JEEDOM_ACCOUNT_NAMES` | empty | Jeedom names that represent the SIA account/hub device. |
 | `AJAXBRIDGE_JEEDOM_CONTROLS_ENABLED` | `false` | Enable allowlisted toggles and relay impulse controls. |
-| `AJAXBRIDGE_JEEDOM_SET_TOPIC_PREFIX` | `jeedom/cmd/set` | Jeedom action topic prefix. |
+| `AJAXBRIDGE_JEEDOM_SET_TOPIC_PREFIX` | `jeedom/cmd/set` | Jeedom action topic prefix. With a source ID, defaults to `jeedom_{source_id}/cmd/set`. Explicit overrides remain unchanged. |
 | `AJAXBRIDGE_JEEDOM_CONTROL_PAYLOAD` | `1` | Payload sent to Jeedom action topics. |
 
 ## Restart Behavior
 
 AjaxBridge keeps the normalized Jeedom mirror in memory while it runs and, by default, persists that mirror to `data/jeedom.json`. The file contains discovered Jeedom devices, command metadata, action metadata, and the latest normalized values.
+
+With a source ID, use the effective cache path shown in `/admin`, such as `/data/apartment/jeedom.json` for the base `/data/jeedom.json`. The source directory applies to explicit environment and CLI file overrides too. Each Jeedom source keeps separate observations and command owners; leave the existing house source ID empty to continue using its current cache.
 
 Cached values are already in canonical units. Restart and metadata reconciliation preserve them exactly; Relay voltage transport scaling applies only to incoming raw observations or once when migrating an older fallback metric. Values previously damaged by repeated scaling cannot be safely repaired by guessing a multiplier: refresh them from a verified source observation. Ambiguous device-name aliases do not establish SIA ownership; use explicit Jeedom command IDs for same-name physical devices.
 

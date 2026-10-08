@@ -25,6 +25,7 @@ const (
 var legacyDiscoveryNodes = []string{"ajax2prometheus"}
 
 type Config struct {
+	SourceID        string
 	Broker          string
 	Username        string
 	Password        string
@@ -114,6 +115,7 @@ type entity struct {
 }
 
 type zonePayload struct {
+	SourceID         string          `json:"source_id,omitempty"`
 	Account          string          `json:"account"`
 	Partition        string          `json:"partition"`
 	Group            string          `json:"group"`
@@ -141,6 +143,7 @@ type zonePayload struct {
 }
 
 type accountPayload struct {
+	SourceID       string `json:"source_id,omitempty"`
 	Account        string `json:"account"`
 	Online         bool   `json:"online"`
 	Mode           string `json:"mode"`
@@ -160,10 +163,12 @@ type accountPayload struct {
 }
 
 type accountAttributesPayload struct {
-	Account string `json:"account"`
+	SourceID string `json:"source_id,omitempty"`
+	Account  string `json:"account"`
 }
 
 type zoneAttributesPayload struct {
+	SourceID     string   `json:"source_id,omitempty"`
 	Account      string   `json:"account"`
 	Partition    string   `json:"partition"`
 	Group        string   `json:"group"`
@@ -176,6 +181,7 @@ type zoneAttributesPayload struct {
 }
 
 func New(cfg Config, log zerolog.Logger) *Publisher {
+	cfg.SourceID = strings.TrimSpace(cfg.SourceID)
 	cfg.Broker = strings.TrimSpace(cfg.Broker)
 	cfg.ClientID = fallback(strings.TrimSpace(cfg.ClientID), "ajaxbridge")
 	cfg.TopicPrefix = trimTopic(fallback(strings.TrimSpace(cfg.TopicPrefix), "ajaxbridge"))
@@ -385,14 +391,18 @@ func (p *Publisher) publishAccount(ctx context.Context, account state.Account) e
 			}
 		}
 	}
-	payload, err := json.Marshal(accountState(account))
+	currentState := accountState(account)
+	currentState.SourceID = p.cfg.SourceID
+	payload, err := json.Marshal(currentState)
 	if err != nil {
 		return err
 	}
 	if err := p.publishState(ctx, plan.stateTopic, payload, p.cfg.Retain); err != nil {
 		return err
 	}
-	attributes, err := json.Marshal(accountAttributes(account))
+	currentAttributes := accountAttributes(account)
+	currentAttributes.SourceID = p.cfg.SourceID
+	attributes, err := json.Marshal(currentAttributes)
 	if err != nil {
 		return err
 	}
@@ -416,14 +426,18 @@ func (p *Publisher) publishZone(ctx context.Context, zone state.Zone) error {
 			}
 		}
 	}
-	payload, err := json.Marshal(zoneState(zone))
+	currentState := zoneState(zone)
+	currentState.SourceID = p.cfg.SourceID
+	payload, err := json.Marshal(currentState)
 	if err != nil {
 		return err
 	}
 	if err := p.publishState(ctx, plan.stateTopic, payload, p.cfg.Retain); err != nil {
 		return err
 	}
-	attributes, err := json.Marshal(zoneAttributes(zone))
+	currentAttributes := zoneAttributes(zone)
+	currentAttributes.SourceID = p.cfg.SourceID
+	attributes, err := json.Marshal(currentAttributes)
 	if err != nil {
 		return err
 	}
@@ -623,6 +637,10 @@ func (p *Publisher) zonePlanFor(zone state.Zone) (zonePlan, error) {
 }
 
 func (p *Publisher) buildDiscoveryMessages(entities []entity, stateTopic, attributesTopic string, device deviceInfo, node string) ([]discoveryMessage, error) {
+	device.Identifiers = append([]string(nil), device.Identifiers...)
+	for index, identifier := range device.Identifiers {
+		device.Identifiers[index] = p.sourceIdentity(identifier)
+	}
 	messages := make([]discoveryMessage, 0, len(entities))
 	for _, ent := range entities {
 		cfg := discoveryConfig{
@@ -658,6 +676,9 @@ func (p *Publisher) buildDiscoveryMessages(entities []entity, stateTopic, attrib
 }
 
 func (p *Publisher) legacyCleanupMessages(entities []entity) []discoveryMessage {
+	if p.cfg.SourceID != "" {
+		return nil
+	}
 	currentNode := slug(p.discoveryNode())
 	messages := make([]discoveryMessage, 0, len(entities)*len(legacyDiscoveryNodes))
 	for _, legacyNode := range legacyDiscoveryNodes {
@@ -688,7 +709,7 @@ func (p *Publisher) legacySIAObjectCleanupMessages(zone state.Zone, entities []e
 		return nil
 	}
 	messages := make([]discoveryMessage, 0, len(entities)*4)
-	nodes := cleanupDiscoveryNodes(p.discoveryNode())
+	nodes := p.cleanupDiscoveryNodes()
 	base := "zone_" + zone.Account + "_" + zone.Zone + "_"
 	for _, ent := range entities {
 		suffix := strings.TrimPrefix(ent.ObjectID, base)
@@ -723,6 +744,13 @@ func cleanupDiscoveryNodes(currentNode string) []string {
 		nodes = append(nodes, node)
 	}
 	return nodes
+}
+
+func (p *Publisher) cleanupDiscoveryNodes() []string {
+	if p.cfg.SourceID != "" {
+		return []string{slug(p.discoveryNode())}
+	}
+	return cleanupDiscoveryNodes(p.discoveryNode())
 }
 
 func legacySIAObjectIDs(zone state.Zone, suffix string) []string {
@@ -781,7 +809,7 @@ func (p *Publisher) renamedSignalCleanupMessages(zone state.Zone) []discoveryMes
 	base := "zone_" + zone.Account + "_" + zone.Zone + "_"
 	signals := sortedSignals(zone.DeviceEvents, zone.SignalActive)
 	messages := make([]discoveryMessage, 0, len(signals))
-	nodes := cleanupDiscoveryNodes(p.discoveryNode())
+	nodes := p.cleanupDiscoveryNodes()
 	for _, signal := range signals {
 		for _, suffix := range legacySignalObjectSuffixes(signal) {
 			objectID := base + suffix
@@ -822,13 +850,32 @@ func (p *Publisher) discoveryTopic(component, node, objectID string) string {
 		p.cfg.DiscoveryPrefix,
 		component,
 		slug(node),
-		slug(objectID),
+		p.sourceObjectID(slug(objectID)),
 		"config",
 	}, "/")
 }
 
 func (p *Publisher) uniqueID(objectID string) string {
-	return slug(p.discoveryNode() + "_" + objectID)
+	if p.cfg.SourceID != "" {
+		// Source is the stable identity namespace; changing an MQTT routing
+		// prefix must not create a new Home Assistant entity for this source.
+		return p.sourceIdentity(slug("ajaxbridge_" + objectID))
+	}
+	return p.sourceIdentity(slug(p.discoveryNode() + "_" + objectID))
+}
+
+func (p *Publisher) sourceIdentity(identity string) string {
+	if p.cfg.SourceID == "" {
+		return identity
+	}
+	return p.cfg.SourceID + ":" + identity
+}
+
+func (p *Publisher) sourceObjectID(objectID string) string {
+	if p.cfg.SourceID == "" {
+		return objectID
+	}
+	return p.cfg.SourceID + "_" + objectID
 }
 
 func (p *Publisher) discoveryNode() string {

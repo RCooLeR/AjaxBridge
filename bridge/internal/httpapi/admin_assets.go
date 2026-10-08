@@ -41,6 +41,7 @@ const adminHTML = `<!doctype html>
       <a class="navbar-brand d-flex align-items-center gap-2" href="/admin">
         <img src="/admin/logo.png" class="brand-logo" alt="AjaxBridge">
         <span>AjaxBridge Admin</span>
+        <span id="sourceBadge" class="badge text-bg-secondary d-none"></span>
       </a>
       <div class="d-flex gap-2">
         <button class="btn btn-outline-secondary btn-sm" onclick="loadAll()">Refresh</button>
@@ -221,6 +222,9 @@ const adminHTML = `<!doctype html>
     }
 
     function renderAll() {
+      const sourceBadge = document.getElementById('sourceBadge');
+      sourceBadge.textContent = model.source_id ? 'Source: ' + model.source_id : '';
+      sourceBadge.classList.toggle('d-none', !model.source_id);
       renderDevices();
       renderMatching();
       renderNotifications();

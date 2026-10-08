@@ -22,6 +22,8 @@ Home Assistant reads the discovery configs under the discovery prefix, default `
 
 SIA entities and Jeedom entities can belong to the same Home Assistant device. This is how the bridge prevents duplicate devices when both sources describe the same physical Ajax device.
 
+For another house or apartment, configure a separate bridge with a stable `AJAXBRIDGE_SOURCE_ID` before its first discovery. The source ID separates MQTT/HA identities even when Ajax zones or Jeedom command IDs overlap. Keep an existing installation's source ID empty to preserve its current entities. New cards use a matching `source_id`; cards with an omitted/empty source select legacy Ajax devices only. Use `area_ids` for ancillary data such as cameras/climate without source metadata, plus distinct Jeedom roots/data volumes; see [multiple installations](./multiple-installations.md) for the complete setup.
+
 ## Install And Configure Home Assistant
 
 1. Install Home Assistant using the official installation guide.
@@ -76,6 +78,8 @@ If MQTT is unavailable, SIA handling continues. Ajax ACK responses are not block
 ## MQTT Topics
 
 Default configuration:
+
+These defaults describe an empty source ID. A nonempty source ID is appended to outgoing client/topic bases and namespaces discovery identities; for example `apartment` uses the MQTT state prefix `ajaxbridge/apartment` and availability topic `ajaxbridge/apartment/status`.
 
 | Setting | Default |
 | --- | --- |

@@ -57,6 +57,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	cfg = cfg.WithSourceNamespace()
 
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -81,8 +82,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 		return err
 	}
 
-	registry := prometheus.NewRegistry()
-	metricSet := metrics.New(registry)
+	registry, metricSet := newMetricRegistry(cfg.SourceID)
 	stateEngine := state.NewEngine(cfg.OfflineGrace, devices)
 	metricSet.SetSnapshot(stateEngine.Snapshot())
 	notificationStore, err := notifications.Load(ctx, cfg.NotificationsPath)
@@ -97,6 +97,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 	var mqttQueue chan hamqtt.Update
 	if cfg.MQTTEnabled() {
 		mqttPublisher = hamqtt.New(hamqtt.Config{
+			SourceID:        cfg.SourceID,
 			Broker:          cfg.MQTTBroker,
 			Username:        cfg.MQTTUsername,
 			Password:        cfg.MQTTPassword,
@@ -129,6 +130,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 	if cfg.JeedomEnabled {
 		jeedomStoreLoaded := false
 		resolver := jeedom.NewCatalogResolver(devices, jeedom.CatalogResolverConfig{
+			SourceID:         cfg.SourceID,
 			Account:          cfg.Account,
 			AccountNames:     cfg.JeedomAccountNames,
 			DiscoverUnlinked: cfg.JeedomDiscoverUnlinked,
@@ -159,6 +161,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 				CommandPayload:       cfg.JeedomControlPayload,
 			}, jeedomStore, mqttPublisher, log.With().Str("component", "jeedom_control").Logger())
 			jeedomPublisher = jeedom.NewPublisher(jeedom.PublisherConfig{
+				SourceID:         cfg.SourceID,
 				StateTopicPrefix: cfg.JeedomStateTopicPrefix,
 				Discovery:        cfg.JeedomDiscovery,
 				DiscoveryPrefix:  cfg.MQTTDiscoveryPrefix,
@@ -211,6 +214,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 		log.With().Str("component", "http").Logger(),
 		application.handleCatalogChanged,
 	)
+	httpServer.SetSourceID(cfg.SourceID)
 	siaServer := sia.NewServer(cfg.SIAListenAddr, cfg.ReadTimeout, application.handleSIAFrame, log.With().Str("component", "sia").Logger())
 
 	if cfg.JeedomEnabled && mqttPublisher != nil {
@@ -307,6 +311,7 @@ func (o notificationObserver) ObserveJeedomControl(ctx context.Context, result j
 func (a *App) handleCatalogChanged(snapshot state.Snapshot) {
 	if a.jeedom != nil {
 		resolver := jeedom.NewCatalogResolver(a.devices, jeedom.CatalogResolverConfig{
+			SourceID:         a.cfg.SourceID,
 			Account:          a.cfg.Account,
 			AccountNames:     a.cfg.JeedomAccountNames,
 			DiscoverUnlinked: a.cfg.JeedomDiscoverUnlinked,
@@ -319,6 +324,17 @@ func (a *App) handleCatalogChanged(snapshot state.Snapshot) {
 	}
 	a.metrics.SetSnapshot(snapshot)
 	a.enqueueMQTTUpdate(hamqtt.Update{Accounts: snapshot.Accounts, Zones: snapshot.Zones})
+}
+
+// Constant labels cover every collector, including dynamic Jeedom snapshots
+// and Go runtime metrics. The empty namespace retains the existing metric API.
+func newMetricRegistry(sourceID string) (*prometheus.Registry, *metrics.Metrics) {
+	registry := prometheus.NewRegistry()
+	var registerer prometheus.Registerer = registry
+	if sourceID != "" {
+		registerer = prometheus.WrapRegistererWith(prometheus.Labels{"source_id": sourceID}, registry)
+	}
+	return registry, metrics.New(registerer)
 }
 
 func (a *App) publishRetainedMQTT(ctx context.Context) {

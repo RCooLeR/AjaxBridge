@@ -23,6 +23,7 @@ AjaxBridge is an unofficial DIY open-source project for compatibility and integr
 - [Bridge documentation](./bridge/docs/index.md)
 - [2.1.0 release and upgrade notes](./bridge/docs/releases/2.1.0.md)
 - [Prometheus metrics and history](./bridge/docs/prometheus.md)
+- [Multiple installations: house and apartment](./bridge/docs/multiple-installations.md)
 - [Jeedom Ajax Systems patch: files, installation and licensing (Українською)](./Jeedom/README.md)
 - [Notifications](./bridge/docs/notifications.md)
 - [Admin panel](./bridge/docs/admin.md)

@@ -27,6 +27,8 @@ export interface AjaxBridgeDetailedCardConfig {
   type: string;
   default_room?: string;
   account?: string;
+  source_id?: string;
+  area_ids?: readonly string[];
   dahua_base?: string;
   grid_power_alarm_entities?: readonly string[];
 }
@@ -35,6 +37,13 @@ export interface AjaxBridgeChipsCardConfig {
   type: string;
   max_chips?: number;
   account?: string;
+  source_id?: string;
+  area_ids?: readonly string[];
   dahua_base?: string;
   grid_power_alarm_entities?: readonly string[];
+}
+
+export interface DashboardScope {
+  sourceId?: string;
+  areaIds?: readonly string[];
 }

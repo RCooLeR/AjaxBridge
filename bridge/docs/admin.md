@@ -10,9 +10,11 @@ http://localhost:8080/admin
 
 The panel uses the repository `logo.png` and Bootstrap from a CDN.
 
+When `AJAXBRIDGE_SOURCE_ID` is configured, the panel shows that source in its header. `/api/admin/bootstrap` includes `source_id`, and HTTP responses include `X-AjaxBridge-Source-ID`. Confirm the source badge and effective file paths before editing one of several installations. The bridge scopes catalog/cache/notification files under a source directory, such as `/data/apartment/devices.json`; empty source preserves existing paths. See [multiple installations](./multiple-installations.md).
+
 ## Device Catalog Editing
 
-The Devices tab edits `data/devices.json`.
+The Devices tab edits the configured catalog path, default `data/devices.json` for empty source or `data/apartment/devices.json` for source `apartment`.
 
 Editable fields:
 
@@ -54,7 +56,7 @@ Matching fields in `data/devices.json`:
 
 ## Notification Editing
 
-The Notifications tab edits `data/notifications.json`.
+The Notifications tab edits the configured notification path, default `data/notifications.json` for empty source or `data/apartment/notifications.json` for source `apartment`.
 
 It can manage:
 

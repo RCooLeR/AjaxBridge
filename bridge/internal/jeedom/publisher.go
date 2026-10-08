@@ -23,6 +23,7 @@ type MQTTClient interface {
 }
 
 type PublisherConfig struct {
+	SourceID         string
 	StateTopicPrefix string
 	Discovery        bool
 	DiscoveryPrefix  string
@@ -73,6 +74,7 @@ type DiscoveryConfig struct {
 }
 
 func NewPublisher(cfg PublisherConfig, mqtt MQTTClient) *Publisher {
+	cfg.SourceID = strings.TrimSpace(cfg.SourceID)
 	cfg.StateTopicPrefix = trimTopic(firstNonEmpty(cfg.StateTopicPrefix, "ajaxbridge/jeedom"))
 	cfg.DiscoveryPrefix = trimTopic(firstNonEmpty(cfg.DiscoveryPrefix, "homeassistant"))
 	cfg.DiscoveryNode = Slug(firstNonEmpty(cfg.DiscoveryNode, "ajaxbridge"))
@@ -312,14 +314,22 @@ func (p *Publisher) publishDevice(ctx context.Context, device Device) error {
 		}
 	}
 
-	payload, err := json.Marshal(StatePayload(device))
+	currentState := StatePayload(device)
+	if p.cfg.SourceID != "" {
+		currentState["source_id"] = p.cfg.SourceID
+	}
+	payload, err := json.Marshal(currentState)
 	if err != nil {
 		return err
 	}
 	if err := p.mqtt.PublishStateMessage(ctx, stateTopic, payload, p.cfg.RetainState); err != nil {
 		return err
 	}
-	attributes, err := json.Marshal(AttributesPayload(device))
+	currentAttributes := AttributesPayload(device)
+	if p.cfg.SourceID != "" {
+		currentAttributes["source_id"] = p.cfg.SourceID
+	}
+	attributes, err := json.Marshal(currentAttributes)
 	if err != nil {
 		return err
 	}
@@ -425,7 +435,7 @@ func (p *Publisher) BuildDiscovery(command Command, device Device) (string, []by
 	attributesTopic := p.AttributesTopic(device.DeviceSlug)
 	cfg := DiscoveryConfig{
 		Name:                firstNonEmpty(commandName(command), titleName(command.Metric)),
-		UniqueID:            discoveryUniqueID(command),
+		UniqueID:            sourceIdentity(p.cfg.SourceID, discoveryUniqueID(command)),
 		StateTopic:          stateTopic,
 		ValueTemplate:       valueTemplate(command),
 		UnitOfMeasurement:   command.Unit,
@@ -434,7 +444,7 @@ func (p *Publisher) BuildDiscovery(command Command, device Device) (string, []by
 		EntityCategory:      command.EntityCategory,
 		JSONAttributesTopic: attributesTopic,
 		Device: DiscoveryDevice{
-			Identifiers:  discoveryIdentifiers(device),
+			Identifiers:  p.discoveryIdentifiers(device),
 			Name:         device.Device,
 			Manufacturer: firstNonEmpty(device.HAManufacturer, "Ajax via Jeedom"),
 			Model:        firstNonEmpty(device.HAModel, "Jeedom MQTT Bridge"),
@@ -463,7 +473,7 @@ func (p *Publisher) BuildSwitchDiscovery(action Action, device Device) (string, 
 	optimistic := false
 	cfg := DiscoveryConfig{
 		Name:                "Control",
-		UniqueID:            "ajaxbridge_jeedom_control_" + Slug(device.DeviceSlug),
+		UniqueID:            sourceIdentity(p.cfg.SourceID, "ajaxbridge_jeedom_control_"+Slug(device.DeviceSlug)),
 		StateTopic:          stateTopic,
 		CommandTopic:        p.CommandTopic(device.DeviceSlug),
 		ValueTemplate:       switchStateValueTemplate,
@@ -472,7 +482,7 @@ func (p *Publisher) BuildSwitchDiscovery(action Action, device Device) (string, 
 		Optimistic:          &optimistic,
 		JSONAttributesTopic: attributesTopic,
 		Device: DiscoveryDevice{
-			Identifiers:  discoveryIdentifiers(device),
+			Identifiers:  p.discoveryIdentifiers(device),
 			Name:         device.Device,
 			Manufacturer: firstNonEmpty(device.HAManufacturer, "Ajax via Jeedom"),
 			Model:        firstNonEmpty(device.HAModel, "Jeedom MQTT Bridge"),
@@ -495,12 +505,12 @@ func (p *Publisher) BuildSwitchDiscovery(action Action, device Device) (string, 
 func (p *Publisher) BuildButtonDiscovery(action Action, device Device) (string, []byte, error) {
 	cfg := DiscoveryConfig{
 		Name:                buttonControlName(action, device),
-		UniqueID:            "ajaxbridge_jeedom_control_" + Slug(device.DeviceSlug) + "_" + buttonActionSlug(action, device),
+		UniqueID:            sourceIdentity(p.cfg.SourceID, "ajaxbridge_jeedom_control_"+Slug(device.DeviceSlug)+"_"+buttonActionSlug(action, device)),
 		CommandTopic:        p.CommandTopic(device.DeviceSlug),
 		PayloadPress:        controlPayload(action.Action),
 		JSONAttributesTopic: p.AttributesTopic(device.DeviceSlug),
 		Device: DiscoveryDevice{
-			Identifiers:  discoveryIdentifiers(device),
+			Identifiers:  p.discoveryIdentifiers(device),
 			Name:         device.Device,
 			Manufacturer: firstNonEmpty(device.HAManufacturer, "Ajax via Jeedom"),
 			Model:        firstNonEmpty(device.HAModel, "Jeedom MQTT Bridge"),
@@ -524,7 +534,7 @@ func (p *Publisher) discoveryTopic(command Command) string {
 }
 
 func (p *Publisher) discoveryTopicFor(component, objectID string) string {
-	return strings.Join([]string{p.cfg.DiscoveryPrefix, component, p.cfg.DiscoveryNode, objectID, "config"}, "/")
+	return strings.Join([]string{p.cfg.DiscoveryPrefix, component, p.cfg.DiscoveryNode, sourceObjectID(p.cfg.SourceID, objectID), "config"}, "/")
 }
 
 func alternateDiscoveryComponents(component string) []string {
@@ -549,6 +559,34 @@ func discoveryIdentifiers(device Device) []string {
 		return []string{"ajaxbridge_jeedom_" + device.DeviceSlug}
 	}
 	return append([]string(nil), device.HAIdentifiers...)
+}
+
+func (p *Publisher) discoveryIdentifiers(device Device) []string {
+	identifiers := discoveryIdentifiers(device)
+	if p.cfg.SourceID == "" {
+		return identifiers
+	}
+	for index, identifier := range identifiers {
+		// Linked identities are already scoped by the catalog resolver.
+		if !strings.HasPrefix(identifier, p.cfg.SourceID+":") {
+			identifiers[index] = sourceIdentity(p.cfg.SourceID, identifier)
+		}
+	}
+	return identifiers
+}
+
+func sourceIdentity(sourceID, identity string) string {
+	if sourceID == "" {
+		return identity
+	}
+	return sourceID + ":" + identity
+}
+
+func sourceObjectID(sourceID, objectID string) string {
+	if sourceID == "" {
+		return objectID
+	}
+	return sourceID + "_" + objectID
 }
 
 func sortedSwitchActions(device Device) []Action {
@@ -750,7 +788,7 @@ func deviceLinkedToSIA(device Device) bool {
 func hasSIAIdentifier(identifiers []string) bool {
 	for _, identifier := range identifiers {
 		identifier = strings.ToLower(strings.TrimSpace(identifier))
-		if strings.HasPrefix(identifier, "ajaxbridge_") && strings.Contains(identifier, "_zone_") {
+		if (strings.HasPrefix(identifier, "ajaxbridge_") || strings.Contains(identifier, ":ajaxbridge_")) && strings.Contains(identifier, "_zone_") {
 			return true
 		}
 	}

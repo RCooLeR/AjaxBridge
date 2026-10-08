@@ -15,6 +15,8 @@ No database is required by the bridge. Runtime SIA state is kept in memory, the 
 
 Use [docker-compose.yml](./docker-compose.yml) as the tracked baseline and keep site-specific production overrides private, for example in an untracked `docker-compose.production.yml` or `docker-compose.override.yml`. Production data should stay under `./data` so the device catalog, notifications, and Jeedom cache survive container restarts.
 
+For another installation, run a separate bridge with `AJAXBRIDGE_SOURCE_ID=apartment`, a separate Jeedom MQTT Manager root, and its own data volume. The source ID separates MQTT/HA identities, scopes data files under an `apartment` directory, and adds a `source_id` Prometheus label without changing local Ajax zones or Jeedom command IDs. Leave an existing installation's source ID empty to preserve its current entity identities and file paths; see [multiple installations](./docs/multiple-installations.md) for configuration and migration details.
+
 ## Upgrading to 2.1.0
 
 Read the [release and upgrade notes](./docs/releases/2.1.0.md) for the complete changes since 2.0.1. Back up the bridge data directory, existing Jeedom command settings, and any Home Assistant statistics before changing electrical units.
@@ -53,6 +55,7 @@ AjaxBridge is an unofficial DIY open-source project for compatibility and integr
 - [Jeedom integration](./docs/jeedom.md)
 - [Jeedom plugin patch files and installation guide (Українською)](../Jeedom/README.md)
 - [Prometheus metrics](./docs/prometheus.md)
+- [Multiple installations](./docs/multiple-installations.md)
 - [Notifications](./docs/notifications.md)
 - [Admin panel](./docs/admin.md)
 - [Home Assistant integration and technical guide](./docs/home-assistant.md)

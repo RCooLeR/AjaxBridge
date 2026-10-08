@@ -23,6 +23,7 @@ import (
 const jsonContentType = "application/json; charset=utf-8"
 
 type Server struct {
+	sourceID         string
 	addr             string
 	state            *state.Engine
 	store            *store.Store
@@ -40,8 +41,21 @@ func New(addr string, stateEngine *state.Engine, store *store.Store, devices *de
 	return &Server{addr: addr, state: stateEngine, store: store, devices: devices, jeedom: jeedomStore, jeedomController: jeedomController, notifications: notifications, reg: reg, log: log, onCatalogChanged: onCatalogChanged}
 }
 
+// SetSourceID identifies this installation. Call before Run starts serving.
+func (s *Server) SetSourceID(sourceID string) {
+	s.sourceID = sourceID
+}
+
 func (s *Server) Run(ctx context.Context) error {
 	router := chi.NewRouter()
+	if s.sourceID != "" {
+		router.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-AjaxBridge-Source-ID", s.sourceID)
+				next.ServeHTTP(w, r)
+			})
+		})
+	}
 	router.Get("/healthz", s.health)
 	router.Get("/readyz", s.ready)
 	router.Get("/state", s.currentState)
@@ -155,6 +169,9 @@ func (s *Server) adminBootstrap(w http.ResponseWriter, _ *http.Request) {
 		payload["jeedom_devices"] = s.jeedom.Devices()
 		payload["jeedom_commands"] = s.jeedom.Commands()
 		payload["jeedom_actions"] = s.jeedom.Actions()
+	}
+	if s.sourceID != "" {
+		payload["source_id"] = s.sourceID
 	}
 	writeJSON(w, payload)
 }
