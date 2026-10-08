@@ -16,6 +16,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && command -v mysqld \
     && command -v mariadb-admin
 
-# Inherit the official bootstrap and cron supervision. Compose persists both
-# /var/www/html and /var/lib/mysql and disables database networking via cnf.
+# Inherit the official bootstrap and cron supervision. Use Docker-managed
+# volumes with nocopy for both /var/www/html and /var/lib/mysql: NAS shared
+# folder ACLs may prevent mysql/www-data from writing even after chown.
+# Fresh nocopy volumes also avoid an old common.config.php skipping bootstrap.
+# Compose disables database networking via cnf.
 
