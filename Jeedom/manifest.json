@@ -1,6 +1,6 @@
 {
-  "bundle": "2026.10.06.1",
-  "date": "2026-10-06",
+  "bundle": "2026.10.09.1",
+  "date": "2026-10-09",
   "plugin_id": "ajaxSystem",
   "jeedom_minimum_from_upstream_metadata": "4.4",
   "baseline_commit": "0ee0a700a0f1d5fa578e0e51a762a15e98daeb69",
@@ -14,7 +14,12 @@
       "kind": "modified",
       "source_sha256_lf": "f40ad344b0cd081a3bfb1086ef7eeb6ff8be5a4bfb525928d999995f0f8ce33e",
       "baseline_sha256_lf": "01a49fc99800c6773afbadd0daeee7c84e8fb3b91d9a986d84549fde11d0652c",
-      "packaged_sha256": "ce55f1110a936e8a40b7bd68141f535a85899b00d1e758c829840909706310d4"
+      "packaged_sha256": "e19ef233a1b18da73114858d86915075dd154ada8bc3bd939b51682b72ad76c2",
+      "previous_packaged_sha256": [
+        "ce55f1110a936e8a40b7bd68141f535a85899b00d1e758c829840909706310d4",
+        "2d4d2305f33b42411c7f0a4d9adca49d4e5db326487d676a16242f613a3c9ad9"
+      ],
+      "package_changes": "2026.10.09.1: finite cached Socket current/voltage and power-product guards; preserve configured scaling, measured zero and subsequent callback updates."
     },
     {
       "path": "core/config/devices/Button.json",
@@ -260,7 +265,9 @@
       "kind": "modified",
       "source_sha256_lf": "0552370d97918fd66d9d3518d4c7c49a5087b535f624c3fc9c01553b095aca4b",
       "baseline_sha256_lf": "5ef8f63ad74265e7ceb01547e64de9ec1646ada20d5c1e623215ebdaa0af0c61",
-      "packaged_sha256": "12abafb0e267f0c29fb7a854747af71eb771457fdcceb36e3540aad75d119dcd"
+      "packaged_sha256": "12abafb0e267f0c29fb7a854747af71eb771457fdcceb36e3540aad75d119dcd",
+      "reviewed_upstream_sha256_lf": "197a592928431e92a58544e79d7607648b3fddda62d0fb3bde2f02ba7c9c36cd",
+      "reviewed_upstream_description": "Official stock dated 2026-04-16, reviewed 2026-10-09: overlay adds only battery percent, issues count and firmware info commands."
     },
     {
       "path": "core/config/devices/SuperiorDoubleButtonG3.json",
@@ -288,7 +295,9 @@
       "kind": "baseline-carry-forward",
       "source_sha256_lf": "a73b11ff6f41dc00d8f8e6e9a9c16866f5b470b5357c42fe28ef970c5c14b455",
       "baseline_sha256_lf": "a73b11ff6f41dc00d8f8e6e9a9c16866f5b470b5357c42fe28ef970c5c14b455",
-      "packaged_sha256": "66191987bb64327496eb4aa6bd8f5913f876d09cd1bbbd8cee21248c6bd4aa9f"
+      "packaged_sha256": "66191987bb64327496eb4aa6bd8f5913f876d09cd1bbbd8cee21248c6bd4aa9f",
+      "reviewed_upstream_sha256_lf": "86673099f9f34b18a31c5b7fe4a50473f113b28e0d2766b2d56af462c9703f99",
+      "reviewed_upstream_description": "Official stock dated 2026-04-16, reviewed 2026-10-09: overlay adds only the temperature info command already carried in the local baseline."
     },
     {
       "path": "core/config/devices/WallSwitch.json",
