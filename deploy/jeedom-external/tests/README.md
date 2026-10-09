@@ -35,3 +35,11 @@ This uses the built runtime's normal entrypoint and pinned image HTML, fresh **l
 Seeding many vendor files and the installer's filesystem permission check on a Windows bind mount can take longer than the database checks; seed allows three minutes and bootstrap ten minutes, both bounded. Jeedom's initial credentials exist only inside this isolated test and are discarded with its database. This does not log into a production installation or operate any physical device. For local debugging, `--keep-on-failure true` retains only the owned local HTML/runtime fixture (still removes its containers/network), and `--reuse-fixture <reported-path>` avoids re-extracting that seed on the next run. A successfully reused fixture is removed on completion.
 
 Reuse is restricted to this harness's `jeedom-runtime-smoke-*` directories directly inside the local OS temporary directory, with its matching ownership marker and completed-seed flag. It always creates a fresh disposable database; it does not resume or overwrite an existing database.
+
+## Focused service/PID permissions regression
+
+```powershell
+node deploy/jeedom-external/tests/run-pid-permissions-smoke.mjs
+```
+
+This runs the actual entrypoint source with synthetic PHP/service/cron stubs and `--network none`. Removing only service-stage `umask 0022` reproduces a live root Node process with a `0600` PID unreadable by www-data. The positive variant verifies atd, Apache and cron inherit `0022`, the PID is `0644`, and www-data can read it and check its live session. Private configuration stays directory `0700` / file `0600` in both cases. Docker calls are bounded to 30 seconds. Only test containers and temporary files are removed; no SQL, NAS files, real plugin processes, credentials or live permissions are touched.

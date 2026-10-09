@@ -31,6 +31,11 @@ Jeedom installation and its intended database. It does not start a database,
 download Jeedom, restore backups, or create an empty installation implicitly.
 Fresh installation is the explicit `seed` / `bootstrap` workflow below.
 
+Private configuration/bootstrap work uses umask `0077`; long-running services
+use `0022` so Jeedom can read root-owned plugin PID files. An overly restrictive
+service umask makes MQTT Manager report `NOK` even while its daemon is connected.
+Existing credential-file permissions are not relaxed.
+
 Three narrow, backed-up changes to Jeedom's `DB.class.php` are required for the
 tested core: omit unsupported `ASC` on `FULLTEXT` indexes; compare integer types
 without obsolete display widths so consistency checks do not repeatedly rebuild

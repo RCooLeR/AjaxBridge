@@ -101,6 +101,10 @@ shutdown() {
 }
 trap 'shutdown; exit 0' TERM INT
 trap shutdown EXIT
+# Keep configuration/bootstrap private, but use the normal service umask for
+# Jeedom daemons. MQTT Manager runs Node through sudo and writes a root-owned
+# PID file that Apache/www-data must be able to read for its health check.
+umask 0022
 service atd start
 service apache2 start
 cron -f &
