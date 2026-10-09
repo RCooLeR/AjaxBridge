@@ -73,6 +73,20 @@ jobs:
       - name: Test standalone archive packaging
         run: python3 -m unittest discover -s scripts -p 'test_package_jeedom.py' -v
 
+      - name: Lint external Jeedom runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          find deploy/jeedom-external -type f -name '*.php' -print0 | sort -z | xargs -0 -r -n 1 php -n -l
+          find deploy/jeedom-external -type f -name '*.sh' -print0 | sort -z | xargs -0 -r -n 1 bash -n
+          find deploy/jeedom-external/tests -type f -name '*.mjs' -print0 | sort -z | xargs -0 -r -n 1 node --check
+
+      - name: Test external Jeedom configuration preservation
+        run: sudo php deploy/jeedom-external/test_runtime.php
+
+      - name: Test migration refusal and isolation contracts offline
+        run: bash deploy/jeedom-external/tests/test_migrate.sh
+
   bridge:
     name: bridge
     runs-on: ubuntu-latest

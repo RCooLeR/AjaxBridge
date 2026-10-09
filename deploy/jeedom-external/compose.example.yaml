@@ -1,0 +1,71 @@
+# Place beside the NAS 80-bridges/docker-compose.yaml. Start each Jeedom
+# explicitly after its database has been imported and verified.
+name: bridges
+
+services:
+  jeedom:
+    container_name: jeedom
+    image: ajaxbridge-jeedom-external:4.6-bookworm-mysql84
+    build:
+      context: ./build/jeedom-external
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      TZ: Europe/Kyiv
+      DB_HOST: db-mysql-84
+      DB_PORT: "3306"
+      DB_NAME: jeedom_house
+      DB_USERNAME: jeedom_house
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      JEEDOM_RUNTIME_DIR: /var/lib/jeedom-external
+    extra_hosts:
+      - "docker.host.internal:172.27.0.1"
+    volumes:
+      - ../volumes/80-bridges/jeedom/html:/var/www/html
+      - ../volumes/80-bridges/jeedom/runtime:/var/lib/jeedom-external
+      - ./secrets/jeedom-house-db-password:/run/secrets/db_password:ro
+    tmpfs:
+      - /tmp/jeedom:rw,nosuid,nodev,size=256m
+      # Mask the upstream image's unused VOLUME declaration; no anonymous
+      # persistent database volume is allocated for these client-only apps.
+      - /var/lib/mysql:rw,noexec,nosuid,nodev,size=1m
+    networks:
+      ugos_shared:
+        aliases:
+          - jeedom
+
+  jeedom-appt:
+    container_name: jeedom-appt
+    image: ajaxbridge-jeedom-external:4.6-bookworm-mysql84
+    build:
+      context: ./build/jeedom-external
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      TZ: Europe/Kyiv
+      DB_HOST: db-mysql-84
+      DB_PORT: "3306"
+      DB_NAME: jeedom_appt
+      DB_USERNAME: jeedom_appt
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      JEEDOM_RUNTIME_DIR: /var/lib/jeedom-external
+    extra_hosts:
+      - "docker.host.internal:172.27.0.1"
+    volumes:
+      - ../volumes/80-bridges/jeedom-appt/html:/var/www/html
+      - ../volumes/80-bridges/jeedom-appt/runtime:/var/lib/jeedom-external
+      - ./secrets/jeedom-appt-db-password:/run/secrets/db_password:ro
+    tmpfs:
+      - /tmp/jeedom:rw,nosuid,nodev,size=256m
+      - /var/lib/mysql:rw,noexec,nosuid,nodev,size=1m
+    ports:
+      - "9081:80"
+    networks:
+      ugos_shared:
+        aliases:
+          - jeedom-appt
+
+networks:
+  ugos_shared:
+    external: true
+    name: ugos_shared
