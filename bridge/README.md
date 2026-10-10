@@ -29,7 +29,7 @@ Home Assistant Recorder exclusions do not stop Prometheus scraping. Neither the 
 
 ## Build and verification
 
-The bridge uses Go 1.27.1. From `bridge/`:
+The bridge uses Go 1.27.2. From `bridge/`:
 
 ```sh
 go test ./...
