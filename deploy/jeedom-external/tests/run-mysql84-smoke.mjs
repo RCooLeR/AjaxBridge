@@ -7,14 +7,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Copies only three non-secret Jeedom files; never mounts or changes the supplied HTML tree.
+// Copies only four non-secret Jeedom files; never mounts or changes the supplied HTML tree.
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const options = { context: 'desktop-linux', runtimeImage: 'ajaxbridge-jeedom-external:mysql84-test', mysqlImage: 'mysql:8.4' };
 for (let i = 2; i < process.argv.length; i += 2) {
   const name = process.argv[i];
   const value = process.argv[i + 1];
   if (!value || !['--source-dir', '--context', '--runtime-image', '--mysql-image', '--patcher-dir'].includes(name)) {
-    throw new Error('Usage: node run-mysql84-smoke.mjs --source-dir <Jeedom HTML or three-file snapshot> [--context desktop-linux] [--runtime-image image] [--mysql-image mysql:8.4] [--patcher-dir directory]');
+    throw new Error('Usage: node run-mysql84-smoke.mjs --source-dir <Jeedom HTML or four-file snapshot> [--context desktop-linux] [--runtime-image image] [--mysql-image mysql:8.4] [--patcher-dir directory]');
   }
   options[{ '--source-dir': 'sourceDir', '--context': 'context', '--runtime-image': 'runtimeImage', '--mysql-image': 'mysqlImage', '--patcher-dir': 'patcherDir' }[name]] = value;
 }
@@ -45,7 +45,7 @@ const mysqlName = `jeedom-mysql84-smoke-${randomUUID().slice(0, 8)}`;
 let mysqlId;
 try {
   await mkdir(runtimeDir);
-  for (const [relative, flat] of [['core/class/DB.class.php', 'DB.class.php'], ['core/class/history.class.php', 'history.class.php'], ['install/database.json', 'database.json']]) {
+  for (const [relative, flat] of [['core/class/DB.class.php', 'DB.class.php'], ['core/class/listener.class.php', 'listener.class.php'], ['core/class/history.class.php', 'history.class.php'], ['install/database.json', 'database.json']]) {
     const destination = path.join(htmlDir, relative);
     await mkdir(path.dirname(destination), { recursive: true });
     try { await copyFile(path.join(options.sourceDir, relative), destination); }
@@ -55,6 +55,7 @@ try {
     }
   }
   const originalDB = await readFile(path.join(htmlDir, 'core/class/DB.class.php'));
+  const originalListener = await readFile(path.join(htmlDir, 'core/class/listener.class.php'));
   const originalHistory = await readFile(path.join(htmlDir, 'core/class/history.class.php'));
   const originalSchema = await readFile(path.join(htmlDir, 'install/database.json'));
   const mountArgs = [
@@ -70,15 +71,22 @@ try {
   const beforeCheck = await patcher(['--check'], [1]);
   assert.equal(beforeCheck.code, 1, 'Unpatched Jeedom should not pass compatibility --check');
   assert.deepEqual(await readFile(path.join(htmlDir, 'core/class/DB.class.php')), originalDB, '--check mutated the source');
+  assert.deepEqual(await readFile(path.join(htmlDir, 'core/class/listener.class.php')), originalListener, '--check mutated listener source');
   const firstPatch = await patcher();
   const patchedDB = await readFile(path.join(htmlDir, 'core/class/DB.class.php'));
+  const patchedListener = await readFile(path.join(htmlDir, 'core/class/listener.class.php'));
   assert.notDeepEqual(patchedDB, originalDB, 'Patcher did not alter incompatible Jeedom DB code');
+  assert.equal(patchedListener.toString(), originalListener.toString().replace('FROM listener GROUP BY class, function, event, option', 'FROM listener GROUP BY `class`, `function`, `event`, `option`'), 'Patcher changed listener dispatch or cleanup semantics');
   const backupsBefore = await readdir(path.join(runtimeDir, 'backups'), { recursive: true });
-  assert(backupsBefore.length > 0, 'Patcher did not preserve an original outside the webroot');
-  assert.deepEqual(await readFile(path.join(runtimeDir, 'backups', backupsBefore[0])), originalDB, 'Patcher backup is not byte-identical to the original');
+  for (const [name, original] of [['DB', originalDB], ['listener', originalListener]]) {
+    const backup = `${name}.class.${createHash('sha256').update(original).digest('hex')}.php.original`;
+    assert(backupsBefore.includes(backup), `Patcher did not preserve original ${name} outside the webroot`);
+    assert.deepEqual(await readFile(path.join(runtimeDir, 'backups', backup)), original, 'Patcher backup is not byte-identical to the original');
+  }
   await patcher(['--check']);
   await patcher();
   assert.deepEqual(await readFile(path.join(htmlDir, 'core/class/DB.class.php')), patchedDB, 'Patcher is not idempotent');
+  assert.deepEqual(await readFile(path.join(htmlDir, 'core/class/listener.class.php')), patchedListener, 'Listener patch is not idempotent');
   assert.deepEqual(await readdir(path.join(runtimeDir, 'backups'), { recursive: true }), backupsBefore, 'Idempotent patch added duplicate backups');
   assert.deepEqual(await readFile(path.join(htmlDir, 'core/class/history.class.php')), originalHistory, 'Compatibility patch rewrote history semantics');
   assert.deepEqual(await readFile(path.join(htmlDir, 'install/database.json')), originalSchema, 'Compatibility patch changed schema definitions');

@@ -41,7 +41,12 @@ tested core: omit unsupported `ASC` on `FULLTEXT` indexes; compare integer types
 without obsolete display widths so consistency checks do not repeatedly rebuild
 unchanged columns; and disable `ONLY_FULL_GROUP_BY` for the Jeedom connection
 only. Actual column types, strict SQL modes and the central MySQL server's global
-settings remain unchanged. The patcher checks the source shape, preserves
+settings remain unchanged. A fourth fix quotes the four `GROUP BY` identifiers
+in `listener.class.php::clean()` because `function` and `option` are reserved
+words in MySQL 8.4. This fixes nightly duplicate-listener maintenance without
+changing listener dispatch, deletion rules, equipment or command IDs.
+The patcher validates both complete candidate files before changing either,
+checks the source shape, preserves
 original files outside the webroot, and fails if a core version cannot be safely
 patched. Other applications on MySQL are unaffected.
 

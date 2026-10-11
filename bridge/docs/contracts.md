@@ -31,6 +31,19 @@ State messages are retained when MQTT retain is enabled. Attribute messages are 
 
 On MQTT reconnect, AjaxBridge resets its publish caches and republishes retained SIA state plus cached Jeedom discovery/state and metadata so Home Assistant can recover without resubmitting Jeedom discovery.
 
+Home Assistant's birth message also triggers that replay after a short randomized
+delay, independently of bridge/broker reconnects. The default input is `online`
+on `homeassistant/status`; `AJAXBRIDGE_MQTT_HA_STATUS_TOPIC` and
+`AJAXBRIDGE_MQTT_HA_ONLINE_PAYLOAD` override it, and an explicitly empty topic
+disables it. This HA-owned topic is not namespaced by `source_id`. Replays are
+serialized, burst-coalesced, and contain only discovery, state, attributes, and
+availability—not actuator commands or invented fresh measurements.
+
+In-process snapshot revisions order SIA publications per account/zone, so a slow
+replay cannot replace already-published newer telemetry or catalog metadata.
+Revision counters are not part of the HTTP/MQTT JSON contract, and discovery-cache
+resets do not reset those ordering gates.
+
 ## Home Assistant Discovery
 
 Default discovery topics use:

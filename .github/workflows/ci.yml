@@ -84,6 +84,9 @@ jobs:
       - name: Test external Jeedom configuration preservation
         run: sudo php deploy/jeedom-external/test_runtime.php
 
+      - name: Test guarded MySQL compatibility patches offline
+        run: sudo php deploy/jeedom-external/tests/compat-regression.php --patcher deploy/jeedom-external/compat.php
+
       - name: Test migration refusal and isolation contracts offline
         run: bash deploy/jeedom-external/tests/test_migrate.sh
 

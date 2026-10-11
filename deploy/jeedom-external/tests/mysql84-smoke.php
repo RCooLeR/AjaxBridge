@@ -84,6 +84,62 @@ foreach ([
 $ordinaryIndex = DB::buildDefinitionIndex(['Key_name' => 'ordinary_fixture', 'Non_unique' => 1, 'columns' => [['column' => 'cmd_id', 'Sub_part' => null]]], 'history');
 check(str_contains($ordinaryIndex, ' ASC'), 'Ordinary BTREE index generation changed unexpectedly');
 
+// Load only the actual listener class, with its production bootstrap excluded.
+// Minimal JSON adapters suffice for normal synchronous dispatch; no Jeedom worker
+// or real device callback is started by this isolated fixture.
+function is_json($value, $default = []) { return is_array($value) ? $value : (json_decode((string) $value, true) ?? $default); }
+class utils {
+    public static function getJsonAttr($value, $key = '', $default = '') {
+        $decoded = is_json($value);
+        return $key === '' ? $decoded : ($decoded[$key] ?? $default);
+    }
+}
+class FixtureListenerReceiver {
+    public static array $calls = [];
+    public static function handle($options): void { self::$calls[] = $options; }
+}
+$listenerSource = file_get_contents($root . '/core/class/listener.class.php');
+check(substr_count($listenerSource, 'require_once') === 1, 'Unexpected listener includes; review sandbox loading');
+$listenerSource = preg_replace('/^<\?php/', '', $listenerSource);
+$listenerSource = preg_replace('/^require_once __DIR__ .*core\.inc\.php.*;\r?$/m', '', $listenerSource, -1, $listenerBootstrapCount);
+check($listenerBootstrapCount === 1, 'Production listener bootstrap was not explicitly excluded');
+eval($listenerSource);
+check(preg_match('/FROM listener GROUP BY[^\r\n]+\r?\n[\t ]*HAVING count\(\*\) > 1/', $listenerSource, $listenerQuery) === 1,
+    'Cannot extract the actual listener cleanup query');
+$listenerSQL = 'SELECT ' . DB::buildField('listener') . ' ' . $listenerQuery[0];
+$insertListener = $pdo->prepare('INSERT INTO listener (`class`, `function`, `event`, `option`) VALUES (?, ?, ?, ?)');
+$baseListener = ['FixtureListenerReceiver', 'handle', '["#smoke::event#"]', '{"background":false}'];
+$insertListener->execute($baseListener);
+$insertListener->execute($baseListener);
+foreach ([0 => 'DifferentReceiver', 1 => 'differentFunction', 2 => '["#another::event#"]', 3 => '{"background":false,"different":true}'] as $column => $value) {
+    $different = $baseListener;
+    $different[$column] = $value;
+    $insertListener->execute($different);
+}
+$otherDuplicate = ['FixtureListenerReceiver', 'handle', '["#another::event#"]', '{"background":false,"other":true}'];
+$insertListener->execute($otherDuplicate);
+$insertListener->execute($otherDuplicate);
+try {
+    $pdo->query(str_replace('GROUP BY `class`, `function`, `event`, `option`', 'GROUP BY class, function, event, option', $listenerSQL));
+    throw new RuntimeException('Unpatched listener query did not reproduce MySQL syntax error');
+} catch (PDOException $expected) {
+    check($expected->errorInfo[1] === 1064, 'Wrong baseline listener failure');
+}
+$duplicates = $pdo->query($listenerSQL)->fetchAll(PDO::FETCH_ASSOC);
+check(count($duplicates) === 2, 'Listener GROUP BY did not retain all four identity dimensions');
+$actualGroups = array_map(fn($row) => json_encode([$row['class'], $row['function'], $row['event'], $row['option']]), $duplicates);
+$expectedGroups = [json_encode($baseListener), json_encode($otherDuplicate)];
+sort($actualGroups); sort($expectedGroups);
+check($actualGroups === $expectedGroups, 'Listener duplicate detection grouped distinct registrations together');
+$pdo->exec('DELETE FROM listener');
+$insertListener->execute(['FixtureListenerReceiver', 'handle', '["#*#"]', '{"background":false}']);
+$insertListener->execute(['FixtureListenerReceiver', 'handle', '["#unmatched#"]', '{"background":false}']);
+listener::check('smoke::event', 42, '2026-10-11 10:00:00');
+check(count(FixtureListenerReceiver::$calls) === 1, 'Listener dispatch missed wildcard or included an unrelated event');
+check(FixtureListenerReceiver::$calls[0]['event_id'] === 'smoke::event'
+    && FixtureListenerReceiver::$calls[0]['value'] === 42
+    && FixtureListenerReceiver::$calls[0]['datetime'] === '2026-10-11 10:00:00', 'Listener dispatch payload changed');
+
 $pdo->exec("INSERT INTO history(cmd_id,datetime,value) VALUES (1,'2026-10-09 09:00:00','1.2'),(1,'2026-10-09 09:10:00','2.4'),(1,'2026-10-09 10:00:00','4.8'),(1,'2026-11-01 09:00:00','7.2'),(1,'2027-01-02 09:00:00','8.4'),(2,'2026-10-09 09:00:00','99')");
 $pdo->exec("INSERT INTO historyArch(cmd_id,datetime,value) VALUES (1,'2026-10-08 09:00:00','0.6')");
 // Load the actual history class, explicitly excluding its production core.inc.php bootstrap.
@@ -134,6 +190,9 @@ echo json_encode([
     'schema_recheck_alterations' => count($recheckIssues),
     'metadata_type_comparisons' => count($typeCases),
     'fulltext_indexes' => $fulltextCount,
+    'unpatched_listener_error' => 1064,
+    'listener_duplicate_groups' => count($duplicates),
+    'listener_dispatch_calls' => count(FixtureListenerReceiver::$calls),
     'jeedom_session_mode' => $sessionMode,
     'unchanged_global_mode' => $globalMode,
     'strict_invalid_date_rejected' => true,

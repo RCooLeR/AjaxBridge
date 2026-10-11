@@ -53,7 +53,11 @@ type Config struct {
 	MQTTDiscovery bool
 	// MQTTDiscoveryPrefix is usually "homeassistant".
 	MQTTDiscoveryPrefix string
-	MQTTTimeout         time.Duration
+	// Home Assistant's shared birth topic is not namespaced by SourceID.
+	// Empty disables birth-triggered snapshot replay.
+	MQTTHomeAssistantStatusTopic   string
+	MQTTHomeAssistantOnlinePayload string
+	MQTTTimeout                    time.Duration
 	// MQTTRetain keeps the latest state visible after Home Assistant or the bridge restarts.
 	MQTTRetain bool
 
@@ -95,6 +99,10 @@ type Config struct {
 
 func FromEnv() Config {
 	mqttDiscovery := envBool(true, "AJAXBRIDGE_MQTT_DISCOVERY", "AJAX2PROM_MQTT_DISCOVERY")
+	haStatusTopic := "homeassistant/status"
+	if value, ok := os.LookupEnv("AJAXBRIDGE_MQTT_HA_STATUS_TOPIC"); ok {
+		haStatusTopic = strings.TrimSpace(value)
+	}
 	cfg := Config{
 		SourceID:          strings.TrimSpace(envValue("AJAXBRIDGE_SOURCE_ID")),
 		SIAListenAddr:     envString(":8099", "AJAXBRIDGE_SIA_ADDR", "AJAX2PROM_SIA_ADDR"),
@@ -121,26 +129,28 @@ func FromEnv() Config {
 			"AJAXBRIDGE_MQTT_DISCOVERY_PREFIX",
 			"AJAX2PROM_MQTT_DISCOVERY_PREFIX",
 		),
-		MQTTTimeout:            envDuration(5*time.Second, "AJAXBRIDGE_MQTT_TIMEOUT", "AJAX2PROM_MQTT_TIMEOUT"),
-		MQTTRetain:             envBool(true, "AJAXBRIDGE_MQTT_RETAIN", "AJAX2PROM_MQTT_RETAIN"),
-		JeedomEnabled:          envBool(false, "AJAXBRIDGE_JEEDOM_ENABLED"),
-		JeedomEventTopic:       envString("jeedom/cmd/event/#", "AJAXBRIDGE_JEEDOM_EVENT_TOPIC"),
-		JeedomDiscoveryTopic:   envString("jeedom/discovery/eqLogic/#", "AJAXBRIDGE_JEEDOM_DISCOVERY_TOPIC"),
-		JeedomStateTopicPrefix: envString("ajaxbridge/jeedom", "AJAXBRIDGE_JEEDOM_STATE_TOPIC_PREFIX"),
-		JeedomDiscovery:        envBool(mqttDiscovery, "AJAXBRIDGE_JEEDOM_DISCOVERY"),
-		JeedomEmptyValuePolicy: envString("keep_last", "AJAXBRIDGE_JEEDOM_EMPTY_VALUE_POLICY"),
-		JeedomRetainState:      envBool(true, "AJAXBRIDGE_JEEDOM_RETAIN_STATE"),
-		JeedomRetainDiscovery:  envBool(true, "AJAXBRIDGE_JEEDOM_RETAIN_DISCOVERY"),
-		JeedomStorePath:        envString("data/jeedom.json", "AJAXBRIDGE_JEEDOM_STORE_PATH"),
-		JeedomSampleDir:        envString("", "AJAXBRIDGE_JEEDOM_SAMPLE_DIR"),
-		JeedomDiscoverUnlinked: envBool(false, "AJAXBRIDGE_JEEDOM_DISCOVER_UNLINKED"),
-		JeedomAccountNames:     envCSV("AJAXBRIDGE_JEEDOM_ACCOUNT_NAMES"),
-		JeedomControlsEnabled:  envBool(false, "AJAXBRIDGE_JEEDOM_CONTROLS_ENABLED"),
-		JeedomSetTopicPrefix:   envString("jeedom/cmd/set", "AJAXBRIDGE_JEEDOM_SET_TOPIC_PREFIX"),
-		JeedomControlPayload:   envString("1", "AJAXBRIDGE_JEEDOM_CONTROL_PAYLOAD"),
-		NotificationsPath:      envString("data/notifications.json", "AJAXBRIDGE_NOTIFICATIONS_PATH"),
-		LogLevel:               envString("info", "AJAXBRIDGE_LOG_LEVEL", "AJAX2PROM_LOG_LEVEL"),
-		LogPretty:              envBool(false, "AJAXBRIDGE_LOG_PRETTY", "AJAX2PROM_LOG_PRETTY"),
+		MQTTTimeout:                    envDuration(5*time.Second, "AJAXBRIDGE_MQTT_TIMEOUT", "AJAX2PROM_MQTT_TIMEOUT"),
+		MQTTHomeAssistantStatusTopic:   haStatusTopic,
+		MQTTHomeAssistantOnlinePayload: envString("online", "AJAXBRIDGE_MQTT_HA_ONLINE_PAYLOAD"),
+		MQTTRetain:                     envBool(true, "AJAXBRIDGE_MQTT_RETAIN", "AJAX2PROM_MQTT_RETAIN"),
+		JeedomEnabled:                  envBool(false, "AJAXBRIDGE_JEEDOM_ENABLED"),
+		JeedomEventTopic:               envString("jeedom/cmd/event/#", "AJAXBRIDGE_JEEDOM_EVENT_TOPIC"),
+		JeedomDiscoveryTopic:           envString("jeedom/discovery/eqLogic/#", "AJAXBRIDGE_JEEDOM_DISCOVERY_TOPIC"),
+		JeedomStateTopicPrefix:         envString("ajaxbridge/jeedom", "AJAXBRIDGE_JEEDOM_STATE_TOPIC_PREFIX"),
+		JeedomDiscovery:                envBool(mqttDiscovery, "AJAXBRIDGE_JEEDOM_DISCOVERY"),
+		JeedomEmptyValuePolicy:         envString("keep_last", "AJAXBRIDGE_JEEDOM_EMPTY_VALUE_POLICY"),
+		JeedomRetainState:              envBool(true, "AJAXBRIDGE_JEEDOM_RETAIN_STATE"),
+		JeedomRetainDiscovery:          envBool(true, "AJAXBRIDGE_JEEDOM_RETAIN_DISCOVERY"),
+		JeedomStorePath:                envString("data/jeedom.json", "AJAXBRIDGE_JEEDOM_STORE_PATH"),
+		JeedomSampleDir:                envString("", "AJAXBRIDGE_JEEDOM_SAMPLE_DIR"),
+		JeedomDiscoverUnlinked:         envBool(false, "AJAXBRIDGE_JEEDOM_DISCOVER_UNLINKED"),
+		JeedomAccountNames:             envCSV("AJAXBRIDGE_JEEDOM_ACCOUNT_NAMES"),
+		JeedomControlsEnabled:          envBool(false, "AJAXBRIDGE_JEEDOM_CONTROLS_ENABLED"),
+		JeedomSetTopicPrefix:           envString("jeedom/cmd/set", "AJAXBRIDGE_JEEDOM_SET_TOPIC_PREFIX"),
+		JeedomControlPayload:           envString("1", "AJAXBRIDGE_JEEDOM_CONTROL_PAYLOAD"),
+		NotificationsPath:              envString("data/notifications.json", "AJAXBRIDGE_NOTIFICATIONS_PATH"),
+		LogLevel:                       envString("info", "AJAXBRIDGE_LOG_LEVEL", "AJAX2PROM_LOG_LEVEL"),
+		LogPretty:                      envBool(false, "AJAXBRIDGE_LOG_PRETTY", "AJAX2PROM_LOG_PRETTY"),
 	}
 	if cfg.SourceID != "" {
 		// Input/control topics belong to MQTT Manager, so explicit settings must
@@ -202,6 +212,14 @@ func (c Config) Validate() error {
 	}
 	if c.MQTTBroker != "" && c.MQTTDiscovery && strings.TrimSpace(c.MQTTDiscoveryPrefix) == "" {
 		return errors.New("MQTT discovery prefix is required when MQTT discovery is enabled")
+	}
+	if c.MQTTEnabled() && c.MQTTHomeAssistantStatusTopic != "" {
+		if strings.ContainsAny(c.MQTTHomeAssistantStatusTopic, "+#\x00") {
+			return errors.New("Home Assistant status topic must be an exact MQTT topic without wildcards")
+		}
+		if c.MQTTHomeAssistantOnlinePayload == "" {
+			return errors.New("Home Assistant online payload is required when its status topic is enabled")
+		}
 	}
 	if c.JeedomEnabled && !c.MQTTEnabled() {
 		return errors.New("Jeedom input requires AJAXBRIDGE_MQTT_BROKER")

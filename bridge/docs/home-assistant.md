@@ -75,6 +75,32 @@ MQTT connected
 
 If MQTT is unavailable, SIA handling continues. Ajax ACK responses are not blocked by MQTT publishing.
 
+### Recovery After Home Assistant Restarts
+
+The bridge listens for Home Assistant's MQTT birth message (`online` on
+`homeassistant/status`). It then republishes availability, discovery, and the
+latest cached SIA/Jeedom state even when the bridge itself stayed connected and
+the values did not change. Existing entity/device IDs and history are preserved;
+actuator commands are never replayed. Cached data is not a new device reading.
+
+Replays use a 2–5 second randomized delay to spread load between installations.
+One worker coalesces repeated birth messages and stops on bridge shutdown.
+Broker reconnects also trigger a snapshot replay. Retained discovery remains
+enabled; birth replay provides an additional recovery path, not a guarantee
+against broker or Home Assistant errors.
+
+- `AJAXBRIDGE_MQTT_HA_STATUS_TOPIC`: default `homeassistant/status`; explicitly
+  set an empty string to disable birth-triggered replay.
+- `AJAXBRIDGE_MQTT_HA_ONLINE_PAYLOAD`: default `online`; must match HA's configured
+  birth payload exactly.
+
+These settings describe the receiving Home Assistant instance, so `source_id`
+does not alter them. Configure both bridges with the same birth topic when they
+serve the same HA, even though their outgoing topics/identities remain isolated.
+If HA uses a custom discovery prefix, its birth topic still needs to match the
+separate setting in HA's MQTT options. See the official
+[birth message guidance](https://www.home-assistant.io/integrations/mqtt/#birth-and-last-will-messages).
+
 ## MQTT Topics
 
 Default configuration:

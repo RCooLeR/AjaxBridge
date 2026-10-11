@@ -111,22 +111,51 @@ function compatibleSource(string $source): string
     });
 }
 
+function compatibleListenerSource(string $source): string
+{
+    return patchMethod($source, 'clean', function (string $method): string {
+        $original = 'FROM listener GROUP BY class, function, event, option';
+        $replacement = 'FROM listener GROUP BY `class`, `function`, `event`, `option`';
+        // FUNCTION and OPTION are reserved in MySQL 8.4. Change only this
+        // maintenance query, never listener lookup/dispatch or deletion rules.
+        if (substr_count($method, $original) + substr_count($method, $replacement) !== 1
+            || substr_count($method, 'GROUP BY') !== 1
+            || preg_match('/(?:' . preg_quote($original, '/') . '|' . preg_quote($replacement, '/') . ')\r?\n[\t ]*HAVING count\(\*\) > 1\';/', $method) !== 1
+            || substr_count($method, "HAVING count(*) > 1'") !== 1
+            || substr_count($method, '$duplicateds = DB::Prepare($sql, array(), DB::FETCH_TYPE_ALL, PDO::FETCH_CLASS, __CLASS__);') !== 1) {
+            throw new RuntimeException('Unsupported Jeedom listener clean implementation; compatibility patch was not applied');
+        }
+        return str_replace($original, $replacement, $method);
+    });
+}
+
 try {
     $options = getopt('', ['root:', 'check']);
     $root = realpath($options['root'] ?? '/var/www/html');
     if ($root === false || $root === DIRECTORY_SEPARATOR) {
         throw new RuntimeException('A mounted Jeedom HTML directory is required');
     }
-    $file = $root . '/core/class/DB.class.php';
-    if (!is_file($file) || is_link($file)) {
-        throw new RuntimeException('Jeedom core/class/DB.class.php must be a regular file');
+    $sources = [];
+    $changes = [];
+    // Validate every target before creating backups, candidates or changing any
+    // mounted core file. A listener source mismatch must not partly patch DB.
+    foreach (['DB' => 'compatibleSource', 'listener' => 'compatibleListenerSource'] as $name => $transform) {
+        $file = $root . '/core/class/' . $name . '.class.php';
+        if (!is_file($file) || is_link($file)) {
+            throw new RuntimeException('Jeedom core/class/' . $name . '.class.php must be a regular file');
+        }
+        $source = file_get_contents($file);
+        if ($source === false) {
+            throw new RuntimeException('Cannot read the mounted Jeedom ' . $name . ' class');
+        }
+        $patched = $transform($source);
+        token_get_all($patched, TOKEN_PARSE);
+        $sources[$file] = hash('sha256', $source);
+        if ($patched !== $source) {
+            $changes[$file] = ['name' => $name, 'source' => $source, 'patched' => $patched];
+        }
     }
-    $source = file_get_contents($file);
-    if ($source === false) {
-        throw new RuntimeException('Cannot read the mounted Jeedom database class');
-    }
-    $patched = compatibleSource($source);
-    if ($patched === $source) {
+    if (!$changes) {
         fwrite(STDOUT, "Jeedom MySQL 8.4 compatibility: ready\n");
         exit(0);
     }
@@ -141,40 +170,53 @@ try {
     if ($runtime === false || $runtime === $root || str_starts_with($runtime, $root . DIRECTORY_SEPARATOR)) {
         throw new RuntimeException('Runtime backups must be outside the served HTML directory');
     }
-    $backup = $runtime . '/DB.class.' . hash('sha256', $source) . '.php.original';
-    if (file_exists($backup)) {
-        if (hash_file('sha256', $backup) !== hash('sha256', $source)) {
-            throw new RuntimeException('Existing compatibility backup does not match the original');
-        }
-    } elseif (file_put_contents($backup, $source, LOCK_EX) !== strlen($source) || !chmod($backup, 0600)) {
-        throw new RuntimeException('Cannot preserve the original Jeedom database class');
-    }
-    $temp = tempnam(dirname($file), '.mysql84-');
-    if ($temp === false) {
-        throw new RuntimeException('The mounted Jeedom core directory is not writable');
-    }
+    $candidates = [];
     try {
-        if (file_put_contents($temp, $patched, LOCK_EX) !== strlen($patched)) {
-            throw new RuntimeException('Cannot write the compatibility candidate');
+        foreach ($changes as $file => $change) {
+            $backup = $runtime . '/' . $change['name'] . '.class.' . $sources[$file] . '.php.original';
+            if (is_link($backup) || (file_exists($backup) && !is_file($backup))) {
+                throw new RuntimeException('Compatibility backup must be a regular file');
+            }
+            if (file_exists($backup)) {
+                if (hash_file('sha256', $backup) !== $sources[$file]) {
+                    throw new RuntimeException('Existing compatibility backup does not match the original');
+                }
+            } elseif (file_put_contents($backup, $change['source'], LOCK_EX) !== strlen($change['source']) || !chmod($backup, 0600)) {
+                throw new RuntimeException('Cannot preserve the original Jeedom ' . $change['name'] . ' class');
+            }
+            $temp = tempnam(dirname($file), '.mysql84-');
+            if ($temp === false) {
+                throw new RuntimeException('The mounted Jeedom core directory is not writable');
+            }
+            $candidates[$file] = $temp;
+            if (file_put_contents($temp, $change['patched'], LOCK_EX) !== strlen($change['patched'])) {
+                throw new RuntimeException('Cannot write the compatibility candidate');
+            }
+            exec(escapeshellarg(PHP_BINARY) . ' -l ' . escapeshellarg($temp) . ' 2>&1', $lintOutput, $lintStatus);
+            if ($lintStatus !== 0) {
+                throw new RuntimeException('Compatibility candidate failed PHP syntax validation');
+            }
+            $stat = stat($file);
+            if ($stat === false || !chmod($temp, $stat['mode'] & 0777)
+                || !chown($temp, $stat['uid']) || !chgrp($temp, $stat['gid'])) {
+                throw new RuntimeException('Cannot preserve mounted Jeedom file ownership/permissions');
+            }
         }
-        exec(escapeshellarg(PHP_BINARY) . ' -l ' . escapeshellarg($temp) . ' 2>&1', $lintOutput, $lintStatus);
-        if ($lintStatus !== 0) {
-            throw new RuntimeException('Compatibility candidate failed PHP syntax validation');
+        foreach ($sources as $file => $hash) {
+            if (is_link($file) || hash_file('sha256', $file) !== $hash) {
+                throw new RuntimeException('Jeedom core changed during compatibility preparation; retry after its update finishes');
+            }
         }
-        $stat = stat($file);
-        if ($stat === false || !chmod($temp, $stat['mode'] & 0777)
-            || !chown($temp, $stat['uid']) || !chgrp($temp, $stat['gid'])) {
-            throw new RuntimeException('Cannot preserve mounted Jeedom file ownership/permissions');
-        }
-        if (hash_file('sha256', $file) !== hash('sha256', $source)) {
-            throw new RuntimeException('Jeedom core changed during compatibility preparation; retry after its update finishes');
-        }
-        if (!rename($temp, $file)) {
-            throw new RuntimeException('Cannot activate the compatibility candidate');
+        foreach ($candidates as $file => $temp) {
+            if (!rename($temp, $file)) {
+                throw new RuntimeException('Cannot activate the compatibility candidate');
+            }
         }
     } finally {
-        if (is_file($temp)) {
-            unlink($temp);
+        foreach ($candidates as $temp) {
+            if (is_file($temp)) {
+                unlink($temp);
+            }
         }
     }
     fwrite(STDOUT, "Jeedom MySQL 8.4 compatibility applied; original preserved outside HTML\n");
