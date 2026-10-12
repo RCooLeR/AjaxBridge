@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"sort"
 	"strings"
 	"sync"
@@ -25,33 +26,45 @@ const (
 var legacyDiscoveryNodes = []string{"ajax2prometheus"}
 
 type Config struct {
-	Broker          string
-	Username        string
-	Password        string
-	ClientID        string
-	TopicPrefix     string
-	Discovery       bool
-	DiscoveryPrefix string
-	Timeout         time.Duration
-	Retain          bool
+	SourceID                   string
+	Broker                     string
+	Username                   string
+	Password                   string
+	ClientID                   string
+	TopicPrefix                string
+	Discovery                  bool
+	DiscoveryPrefix            string
+	HomeAssistantStatusTopic   string
+	HomeAssistantOnlinePayload string
+	Timeout                    time.Duration
+	Retain                     bool
 }
 
 type Publisher struct {
-	cfg             Config
-	client          paho.Client
-	log             zerolog.Logger
-	mu              sync.Mutex
-	discovered      map[string]string
-	publishedStates map[string]string
-	accountPlans    map[string]accountPlan
-	zonePlans       map[string]zonePlan
-	subscriptions   map[string]MessageHandler
-	connectHandlers []func(context.Context)
+	cfg               Config
+	client            paho.Client
+	log               zerolog.Logger
+	mu                sync.Mutex
+	discovered        map[string]string
+	publishedStates   map[string]string
+	accountPlans      map[string]accountPlan
+	zonePlans         map[string]zonePlan
+	subscriptions     map[string]MessageHandler
+	connectHandlers   []func(context.Context)
+	replayMu          sync.Mutex
+	haRecoveryStarted bool
+	stateGates        map[string]*statePublishGate
+}
+
+type statePublishGate struct {
+	mu             sync.Mutex
+	latestRevision uint64
 }
 
 type Update struct {
 	Accounts []state.Account
 	Zones    []state.Zone
+	Revision uint64
 }
 
 type MessageHandler = func(topic string, payload []byte)
@@ -114,6 +127,7 @@ type entity struct {
 }
 
 type zonePayload struct {
+	SourceID         string          `json:"source_id,omitempty"`
 	Account          string          `json:"account"`
 	Partition        string          `json:"partition"`
 	Group            string          `json:"group"`
@@ -141,6 +155,7 @@ type zonePayload struct {
 }
 
 type accountPayload struct {
+	SourceID       string `json:"source_id,omitempty"`
 	Account        string `json:"account"`
 	Online         bool   `json:"online"`
 	Mode           string `json:"mode"`
@@ -160,10 +175,12 @@ type accountPayload struct {
 }
 
 type accountAttributesPayload struct {
-	Account string `json:"account"`
+	SourceID string `json:"source_id,omitempty"`
+	Account  string `json:"account"`
 }
 
 type zoneAttributesPayload struct {
+	SourceID     string   `json:"source_id,omitempty"`
 	Account      string   `json:"account"`
 	Partition    string   `json:"partition"`
 	Group        string   `json:"group"`
@@ -176,10 +193,12 @@ type zoneAttributesPayload struct {
 }
 
 func New(cfg Config, log zerolog.Logger) *Publisher {
+	cfg.SourceID = strings.TrimSpace(cfg.SourceID)
 	cfg.Broker = strings.TrimSpace(cfg.Broker)
 	cfg.ClientID = fallback(strings.TrimSpace(cfg.ClientID), "ajaxbridge")
 	cfg.TopicPrefix = trimTopic(fallback(strings.TrimSpace(cfg.TopicPrefix), "ajaxbridge"))
 	cfg.DiscoveryPrefix = trimTopic(fallback(strings.TrimSpace(cfg.DiscoveryPrefix), "homeassistant"))
+	cfg.HomeAssistantStatusTopic = strings.TrimSpace(cfg.HomeAssistantStatusTopic)
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 5 * time.Second
 	}
@@ -191,6 +210,7 @@ func New(cfg Config, log zerolog.Logger) *Publisher {
 		accountPlans:    make(map[string]accountPlan),
 		zonePlans:       make(map[string]zonePlan),
 		subscriptions:   make(map[string]MessageHandler),
+		stateGates:      make(map[string]*statePublishGate),
 	}
 }
 
@@ -272,6 +292,7 @@ func (p *Publisher) PublishSnapshot(ctx context.Context, snapshot state.Snapshot
 	return p.PublishUpdate(ctx, Update{
 		Accounts: snapshot.Accounts,
 		Zones:    snapshot.Zones,
+		Revision: snapshot.Revision,
 	})
 }
 
@@ -288,13 +309,13 @@ func (p *Publisher) PublishUpdate(ctx context.Context, update Update) error {
 
 	var errs []error
 	for _, account := range update.Accounts {
-		if err := p.publishAccount(ctx, account); err != nil {
+		if err := p.publishAccount(ctx, account, update.Revision); err != nil {
 			errs = append(errs, err)
 		}
 	}
 
 	for _, zone := range update.Zones {
-		if err := p.publishZone(ctx, zone); err != nil {
+		if err := p.publishZone(ctx, zone, update.Revision); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -337,6 +358,98 @@ func (p *Publisher) AddConnectHandler(handler func(context.Context)) {
 	}
 }
 
+// StartHomeAssistantRecovery schedules snapshot replay when Home Assistant
+// announces that its MQTT integration is ready. The MQTT callback only queues a
+// request: waiting for publish acknowledgements in it can deadlock ordered MQTT
+// delivery. A single worker coalesces bursts and stops with the app context.
+func (p *Publisher) StartHomeAssistantRecovery(ctx context.Context, replay func(context.Context)) error {
+	if !p.Enabled() || p.cfg.HomeAssistantStatusTopic == "" || replay == nil {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if p.cfg.HomeAssistantOnlinePayload == "" {
+		return errors.New("Home Assistant online payload is required")
+	}
+	if p.cfg.HomeAssistantStatusTopic == p.availabilityTopic() {
+		return errors.New("Home Assistant status topic must differ from bridge availability")
+	}
+	p.mu.Lock()
+	if p.haRecoveryStarted {
+		p.mu.Unlock()
+		return errors.New("Home Assistant recovery already started")
+	}
+	p.haRecoveryStarted = true
+	p.mu.Unlock()
+
+	requests := make(chan struct{}, 1)
+	go p.runHomeAssistantRecovery(ctx, requests, replay, func() time.Duration {
+		// Spread simultaneous bridge responses after HA's retained-discovery
+		// startup burst, rather than making all installations replay together.
+		return 2*time.Second + time.Duration(rand.Int64N(int64(3*time.Second)))
+	})
+	return p.Subscribe(ctx, p.cfg.HomeAssistantStatusTopic, func(topic string, payload []byte) {
+		if ctx.Err() != nil || topic != p.cfg.HomeAssistantStatusTopic || string(payload) != p.cfg.HomeAssistantOnlinePayload {
+			return
+		}
+		select {
+		case requests <- struct{}{}:
+		default:
+		}
+	})
+}
+
+func (p *Publisher) runHomeAssistantRecovery(ctx context.Context, requests <-chan struct{}, replay func(context.Context), delay func() time.Duration) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-requests:
+		}
+		timer := time.NewTimer(delay())
+	waitForReplay:
+		for {
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-requests:
+				// One replay serves all birth messages in this delay window.
+			case <-timer.C:
+				break waitForReplay
+			}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		p.log.Info().Msg("Home Assistant online; replaying MQTT discovery and state")
+		replay(ctx)
+		// A birth received during replay leaves at most one pending request.
+		// Keep it: HA may actually have restarted while the batch was sent.
+	}
+}
+
+// ReplayRetained serializes reconnect and HA-birth snapshots, invalidates only
+// outgoing state/discovery deduplication, and republishes bridge availability.
+// It does not cache or replay actuator command messages.
+func (p *Publisher) ReplayRetained(ctx context.Context, replay func(context.Context)) error {
+	if !p.Enabled() || replay == nil {
+		return nil
+	}
+	p.replayMu.Lock()
+	defer p.replayMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	p.resetCaches()
+	if err := p.publish(ctx, p.availabilityTopic(), payloadOnline, true); err != nil {
+		return err
+	}
+	replay(ctx)
+	return nil
+}
+
 func (p *Publisher) PublishStateMessage(ctx context.Context, topic string, payload []byte, retain bool) error {
 	if !p.Enabled() || p.client == nil {
 		return nil
@@ -368,7 +481,12 @@ func (p *Publisher) AvailabilityTopic() string {
 	return p.availabilityTopic()
 }
 
-func (p *Publisher) publishAccount(ctx context.Context, account state.Account) error {
+func (p *Publisher) publishAccount(ctx context.Context, account state.Account, revision uint64) error {
+	release, current := p.beginStatePublish("account:"+account.Account, revision)
+	if !current {
+		return nil
+	}
+	defer release()
 	plan, err := p.accountPlanFor(account)
 	if err != nil {
 		return err
@@ -385,21 +503,30 @@ func (p *Publisher) publishAccount(ctx context.Context, account state.Account) e
 			}
 		}
 	}
-	payload, err := json.Marshal(accountState(account))
+	currentState := accountState(account)
+	currentState.SourceID = p.cfg.SourceID
+	payload, err := json.Marshal(currentState)
 	if err != nil {
 		return err
 	}
 	if err := p.publishState(ctx, plan.stateTopic, payload, p.cfg.Retain); err != nil {
 		return err
 	}
-	attributes, err := json.Marshal(accountAttributes(account))
+	currentAttributes := accountAttributes(account)
+	currentAttributes.SourceID = p.cfg.SourceID
+	attributes, err := json.Marshal(currentAttributes)
 	if err != nil {
 		return err
 	}
 	return p.publishState(ctx, plan.attributesTopic, attributes, true)
 }
 
-func (p *Publisher) publishZone(ctx context.Context, zone state.Zone) error {
+func (p *Publisher) publishZone(ctx context.Context, zone state.Zone, revision uint64) error {
+	release, current := p.beginStatePublish("zone:"+zone.Account+"\x00"+zone.Zone, revision)
+	if !current {
+		return nil
+	}
+	defer release()
 	plan, err := p.zonePlanFor(zone)
 	if err != nil {
 		return err
@@ -416,18 +543,42 @@ func (p *Publisher) publishZone(ctx context.Context, zone state.Zone) error {
 			}
 		}
 	}
-	payload, err := json.Marshal(zoneState(zone))
+	currentState := zoneState(zone)
+	currentState.SourceID = p.cfg.SourceID
+	payload, err := json.Marshal(currentState)
 	if err != nil {
 		return err
 	}
 	if err := p.publishState(ctx, plan.stateTopic, payload, p.cfg.Retain); err != nil {
 		return err
 	}
-	attributes, err := json.Marshal(zoneAttributes(zone))
+	currentAttributes := zoneAttributes(zone)
+	currentAttributes.SourceID = p.cfg.SourceID
+	attributes, err := json.Marshal(currentAttributes)
 	if err != nil {
 		return err
 	}
 	return p.publishState(ctx, plan.attributesTopic, attributes, true)
+}
+
+// A slow replay must not overwrite newer live telemetry. Gates cover one
+// account/zone, not a whole replay batch, and survive dedup cache resets. Engine
+// revisions also order online/catalog changes whose event timestamps may match.
+func (p *Publisher) beginStatePublish(key string, revision uint64) (func(), bool) {
+	p.mu.Lock()
+	gate := p.stateGates[key]
+	if gate == nil {
+		gate = &statePublishGate{}
+		p.stateGates[key] = gate
+	}
+	p.mu.Unlock()
+	gate.mu.Lock()
+	if revision < gate.latestRevision {
+		gate.mu.Unlock()
+		return nil, false
+	}
+	gate.latestRevision = revision
+	return gate.mu.Unlock, true
 }
 
 func (p *Publisher) publishDiscoveryMessage(ctx context.Context, message discoveryMessage) error {
@@ -623,6 +774,10 @@ func (p *Publisher) zonePlanFor(zone state.Zone) (zonePlan, error) {
 }
 
 func (p *Publisher) buildDiscoveryMessages(entities []entity, stateTopic, attributesTopic string, device deviceInfo, node string) ([]discoveryMessage, error) {
+	device.Identifiers = append([]string(nil), device.Identifiers...)
+	for index, identifier := range device.Identifiers {
+		device.Identifiers[index] = p.sourceIdentity(identifier)
+	}
 	messages := make([]discoveryMessage, 0, len(entities))
 	for _, ent := range entities {
 		cfg := discoveryConfig{
@@ -658,6 +813,9 @@ func (p *Publisher) buildDiscoveryMessages(entities []entity, stateTopic, attrib
 }
 
 func (p *Publisher) legacyCleanupMessages(entities []entity) []discoveryMessage {
+	if p.cfg.SourceID != "" {
+		return nil
+	}
 	currentNode := slug(p.discoveryNode())
 	messages := make([]discoveryMessage, 0, len(entities)*len(legacyDiscoveryNodes))
 	for _, legacyNode := range legacyDiscoveryNodes {
@@ -688,7 +846,7 @@ func (p *Publisher) legacySIAObjectCleanupMessages(zone state.Zone, entities []e
 		return nil
 	}
 	messages := make([]discoveryMessage, 0, len(entities)*4)
-	nodes := cleanupDiscoveryNodes(p.discoveryNode())
+	nodes := p.cleanupDiscoveryNodes()
 	base := "zone_" + zone.Account + "_" + zone.Zone + "_"
 	for _, ent := range entities {
 		suffix := strings.TrimPrefix(ent.ObjectID, base)
@@ -723,6 +881,13 @@ func cleanupDiscoveryNodes(currentNode string) []string {
 		nodes = append(nodes, node)
 	}
 	return nodes
+}
+
+func (p *Publisher) cleanupDiscoveryNodes() []string {
+	if p.cfg.SourceID != "" {
+		return []string{slug(p.discoveryNode())}
+	}
+	return cleanupDiscoveryNodes(p.discoveryNode())
 }
 
 func legacySIAObjectIDs(zone state.Zone, suffix string) []string {
@@ -781,7 +946,7 @@ func (p *Publisher) renamedSignalCleanupMessages(zone state.Zone) []discoveryMes
 	base := "zone_" + zone.Account + "_" + zone.Zone + "_"
 	signals := sortedSignals(zone.DeviceEvents, zone.SignalActive)
 	messages := make([]discoveryMessage, 0, len(signals))
-	nodes := cleanupDiscoveryNodes(p.discoveryNode())
+	nodes := p.cleanupDiscoveryNodes()
 	for _, signal := range signals {
 		for _, suffix := range legacySignalObjectSuffixes(signal) {
 			objectID := base + suffix
@@ -822,13 +987,32 @@ func (p *Publisher) discoveryTopic(component, node, objectID string) string {
 		p.cfg.DiscoveryPrefix,
 		component,
 		slug(node),
-		slug(objectID),
+		p.sourceObjectID(slug(objectID)),
 		"config",
 	}, "/")
 }
 
 func (p *Publisher) uniqueID(objectID string) string {
-	return slug(p.discoveryNode() + "_" + objectID)
+	if p.cfg.SourceID != "" {
+		// Source is the stable identity namespace; changing an MQTT routing
+		// prefix must not create a new Home Assistant entity for this source.
+		return p.sourceIdentity(slug("ajaxbridge_" + objectID))
+	}
+	return p.sourceIdentity(slug(p.discoveryNode() + "_" + objectID))
+}
+
+func (p *Publisher) sourceIdentity(identity string) string {
+	if p.cfg.SourceID == "" {
+		return identity
+	}
+	return p.cfg.SourceID + ":" + identity
+}
+
+func (p *Publisher) sourceObjectID(objectID string) string {
+	if p.cfg.SourceID == "" {
+		return objectID
+	}
+	return p.cfg.SourceID + "_" + objectID
 }
 
 func (p *Publisher) discoveryNode() string {

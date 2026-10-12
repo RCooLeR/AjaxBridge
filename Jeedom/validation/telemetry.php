@@ -1,5 +1,5 @@
 <?php
-// Adapted 2026-10-06 for AjaxBridge packaging, hub channels and telemetry regressions.
+// Adapted 2026-10-09 for AjaxBridge packaging, hub channels and safe Socket telemetry.
 // Run with: php validation/telemetry.php /path/to/complete/ajaxSystem
 // Executes the plugin's real parser/migration with a small in-memory Jeedom adapter.
 // Payloads are synthetic API examples, not recordings from a live installation.
@@ -51,6 +51,7 @@ class eqLogic {
     $this->configuration = array('device' => $device, 'type' => $type);
   }
   public function getId() { return $this->id; }
+  public static function byLogicalId($id, $plugin) { return self::$equipment[$id] ?? null; }
   public function getConfiguration($key) { return $this->configuration[$key] ?? ''; }
   public function setConfiguration($key, $value) { $this->configuration[$key] = $value; }
   public function save($direct = false) {}
@@ -83,6 +84,9 @@ class cache {
   public static function byKey($key) { return new self(); }
   public function getValue() { return 'test-session'; }
 }
+class jeedom { public static function apiAccess($key, $plugin) { return $key === 'synthetic-callback-key'; } }
+class log { public static function add($plugin, $level, $message) {} }
+function init($key) { return ''; }
 class com_http {
   public static $requests = 0;
   public function __construct($url) {
@@ -303,6 +307,64 @@ addInfo($socket, 'realState', 'binary');
 $socket->updateData(array('currentMA' => 1000, 'voltage' => 230, 'realState' => 0), true);
 same(230, reading($socket, 'power'), 'Socket power uses updated scaled current and voltage');
 same(1, reading($socket, 'realState'), 'Socket callback inversion preserved');
+
+// Power is derived from cached, already formatted readings, not raw mA payloads.
+// Invalid caches must preserve power and allow unrelated/next callbacks through.
+foreach (array(null, '', ' ', 'unknown', false, true, array(), new stdClass(), NAN, INF, -INF, '1e309') as $invalid) {
+  foreach (array('currentMA', 'voltage') as $logicalId) {
+    $current->value = 1;
+    $socket->getCmd('info', 'voltage')->value = 230;
+    $socket->getCmd('info', $logicalId)->value = $invalid;
+    $socket->getCmd('info', 'power')->value = 123;
+    $socket->getCmd('info', 'realState')->value = 0;
+    $socket->updateData(array('realState' => 0), true);
+    same(123, reading($socket, 'power'), 'Invalid cached ' . $logicalId . ' preserves power');
+    same(1, reading($socket, 'realState'), 'Invalid cached ' . $logicalId . ' does not abort other metrics');
+  }
+}
+$current->value = 1e308;
+$socket->getCmd('info', 'voltage')->value = 230;
+$socket->updateData(array(), true);
+same(123, reading($socket, 'power'), 'Overflowing finite operands preserve prior power');
+foreach (array(array(0, 230), array(2, 0), array('0', '230')) as $zeroReadings) {
+  $current->value = $zeroReadings[0];
+  $socket->getCmd('info', 'voltage')->value = $zeroReadings[1];
+  $socket->updateData(array(), true);
+  same(0, reading($socket, 'power'), 'Measured numeric zero produces zero power');
+}
+$current->value = '1.5';
+$socket->getCmd('info', 'voltage')->value = '230';
+$socket->updateData(array(), true);
+same(345.0, reading($socket, 'power'), 'Finite numeric strings produce power');
+$socket->updateData(array('currentMA' => 1500, 'voltage' => 230), true);
+same(345.0, reading($socket, 'power'), 'Socket command scale is applied exactly once');
+same('#value# / 1000', $current->attributes['configuration']['calculValueOffset'], 'Socket current formula remains unchanged');
+foreach (array('currentMA', 'voltage') as $missingLogicalId) {
+  $incompleteSocket = new ajaxSystem('Socket');
+  addInfo($incompleteSocket, $missingLogicalId === 'currentMA' ? 'voltage' : 'currentMA')->value = 1;
+  addInfo($incompleteSocket, 'power')->value = 55;
+  $incompleteSocket->updateData(array(), true);
+  same(55, reading($incompleteSocket, 'power'), 'Missing ' . $missingLogicalId . ' command preserves power');
+}
+
+// Exercise the actual callback foreach: a bad Socket cache must not prevent the
+// next device's update. Replace only transport/bootstrap with synthetic inputs.
+$callbackSource = file_get_contents($pluginRoot . '/core/php/jeeAjaxSystem.php');
+$callbackSource = preg_replace('/^require_once .*$/m', '', $callbackSource, 1, $removed);
+if ($removed !== 1) { throw new RuntimeException('Expected one callback bootstrap include'); }
+$callbackSource = str_replace('$datas = json_decode(file_get_contents(\'php://input\'), true);',
+  '$datas = $GLOBALS[\'syntheticCallbackBatch\'];', $callbackSource, $replaced);
+if ($replaced !== 1) { throw new RuntimeException('Expected one callback transport read'); }
+$current->value = '';
+$socket->getCmd('info', 'power')->value = 123;
+$GLOBALS['syntheticCallbackBatch'] = array('apikey' => 'synthetic-callback-key', 'data' => array(
+  array('id' => $socket->getId(), 'updates' => array('voltage' => 230)),
+  array('id' => $button->getId(), 'updates' => array('issuesCount' => 8))
+));
+eval(substr($callbackSource, 5));
+same(123, reading($socket, 'power'), 'Invalid Socket cache preserves power through the real callback handler');
+same(8, reading($button, 'issuesCount'), 'Next device is processed after invalid Socket in callback batch');
+unset($GLOBALS['syntheticCallbackBatch']);
 
 // WallSwitch templates declare raw units without introducing a second conversion.
 $wallUnits = new ajaxSystem('WallSwitch');

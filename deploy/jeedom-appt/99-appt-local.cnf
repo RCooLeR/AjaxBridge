@@ -1,0 +1,4 @@
+# Jeedom uses localhost's Unix socket. No SQL listener on shared networks.
+[mysqld]
+bind-address = 127.0.0.1
+skip-networking

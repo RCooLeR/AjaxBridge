@@ -1,5 +1,7 @@
 # Метрики Ajax System для Jeedom
 
+Socket power safety in bundle 2026.10.09.1: only finite numeric cached current/voltage and a finite product update power. Invalid readings preserve prior power and do not abort following callbacks; measured zero remains valid. Existing command scaling is used exactly once. No Socket templates, formulas, IDs or history are changed.
+
 Цей документ описує телеметрію, яку містить пакет у каталозі `Jeedom`. Джерело — плагін Ajax System після коміту `af5a742`, доповнений локальною телеметрією Hub 2 Plus у комплекті `2026.10.06.1`; зміни порівнюються з початковим станом `0ee0a70`.
 
 Пакет містить **41 JSON-шаблон пристроїв і 3 PHP-файли**: 30 нових шаблонів, 10 розширених і додатково `Transmitter.json`, у якому температура вже була додана до початкового коміту. PHP-файли: `core/class/ajaxSystem.class.php`, `core/php/jeeAjaxSystem.php` та `plugin_info/install.php`.

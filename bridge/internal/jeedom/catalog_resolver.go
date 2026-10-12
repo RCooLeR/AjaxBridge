@@ -8,6 +8,7 @@ import (
 )
 
 type CatalogResolverConfig struct {
+	SourceID         string
 	Account          string
 	AccountNames     []string
 	DiscoverUnlinked bool
@@ -23,6 +24,7 @@ type CatalogResolver struct {
 }
 
 func NewCatalogResolver(catalog *devicecatalog.Catalog, cfg CatalogResolverConfig) *CatalogResolver {
+	cfg.SourceID = strings.TrimSpace(cfg.SourceID)
 	resolver := &CatalogResolver{
 		cfg:            cfg,
 		byCommandID:    make(map[string]DeviceIdentity),
@@ -45,7 +47,7 @@ func NewCatalogResolver(catalog *devicecatalog.Catalog, cfg CatalogResolverConfi
 			DeviceSlug:     "account_" + Slug(account),
 			DeviceName:     "Ajax account " + account,
 			BaseSlug:       "account_" + Slug(account),
-			HAIdentifiers:  []string{"ajaxbridge_account_" + account},
+			HAIdentifiers:  []string{sourceIdentity(cfg.SourceID, "ajaxbridge_account_"+account)},
 			HAManufacturer: "Ajax Systems",
 			HAModel:        "Ajax account",
 			LinkedSource:   "sia",
@@ -61,6 +63,9 @@ func NewCatalogResolver(catalog *devicecatalog.Catalog, cfg CatalogResolverConfi
 
 	for _, device := range devices {
 		identity := identityForCatalogDevice(device)
+		for index, identifier := range identity.HAIdentifiers {
+			identity.HAIdentifiers[index] = sourceIdentity(cfg.SourceID, identifier)
+		}
 		for _, commandID := range device.JeedomCommandIDs {
 			commandID = strings.TrimSpace(commandID)
 			if commandID != "" {

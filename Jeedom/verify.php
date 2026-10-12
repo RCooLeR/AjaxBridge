@@ -63,11 +63,20 @@ foreach ($manifest['files'] as $entry) {
     $path = $root . '/' . $entry['path'];
     if (!file_exists($path) && $entry['kind'] === 'added') { continue; }
     $accepted = array_filter(array($entry['baseline_sha256_lf'], $entry['source_sha256_lf'], $entry['packaged_sha256']));
+    // Separately reviewed official-stock files are not previous package builds.
+    $reviewed = isset($entry['reviewed_upstream_sha256_lf']) ? (array) $entry['reviewed_upstream_sha256_lf'] : array();
+    foreach ($reviewed as $hash) {
+        if (!is_string($hash) || !preg_match('/^[a-f0-9]{64}$/', $hash)) { fail('Invalid reviewed upstream checksum'); }
+    }
+    $accepted = array_merge($accepted, $reviewed);
     // Older packaged revisions are accepted only by their exact recorded bytes.
+    $previous = isset($entry['previous_packaged_sha256']) ? (array) $entry['previous_packaged_sha256'] : array();
+    foreach ($previous as $hash) {
+        if (!is_string($hash) || !preg_match('/^[a-f0-9]{64}$/', $hash)) { fail('Invalid previous packaged checksum'); }
+    }
     $matches = is_file($path) && (
         in_array(shaLf($path), $accepted, true)
-        || (isset($entry['previous_packaged_sha256'])
-            && hash_file('sha256', $path) === $entry['previous_packaged_sha256'])
+        || in_array(hash_file('sha256', $path), $previous, true)
     );
     if (!$matches) {
         fwrite(STDERR, 'REVIEW ' . $entry['path'] . "\n");

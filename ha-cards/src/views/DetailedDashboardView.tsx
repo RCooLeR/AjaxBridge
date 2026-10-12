@@ -17,12 +17,14 @@ interface DetailedDashboardViewProps {
   initialRoomId?: string;
   hass?: HomeAssistant;
   account?: string;
+  sourceId?: string;
+  areaIds?: readonly string[];
   dahuaBase?: string;
   gridPowerAlarmEntities?: readonly string[];
 }
 
-export function DetailedDashboardView({ mode = 'standalone', initialRoomId, hass, account, dahuaBase, gridPowerAlarmEntities }: DetailedDashboardViewProps) {
-  const liveData = useDashboardData(hass, account, dahuaBase, gridPowerAlarmEntities);
+export function DetailedDashboardView({ mode = 'standalone', initialRoomId, hass, account, sourceId, areaIds, dahuaBase, gridPowerAlarmEntities }: DetailedDashboardViewProps) {
+  const liveData = useDashboardData(hass, account, dahuaBase, gridPowerAlarmEntities, { sourceId, areaIds });
   const data = hass ? liveData : dashboardData;
   const [selectedRoomId, setSelectedRoomId] = useState<string>('');
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);

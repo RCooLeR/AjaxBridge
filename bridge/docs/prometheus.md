@@ -24,6 +24,18 @@ scrape_configs:
 
 Use the hostname that Prometheus can reach. If Prometheus runs outside Docker, that may be `HOST_IP:8080`.
 
+With `AJAXBRIDGE_SOURCE_ID` configured, every exported metric has a constant `source_id` label. Empty preserves the legacy labels. Local `command_id`, `device`, `account`, and `zone` values may overlap between installations; scope queries by source as well as these local identifiers. Prometheus also adds `job` and `instance` for each target. See [multiple installations](./multiple-installations.md#prometheus) for separate house/apartment targets, adding a house label at scrape time without renaming HA entities, and source-preserving aggregations.
+
+For example, select one apartment command or temperature series:
+
+```promql
+ajax_jeedom_command_value{job="ajaxbridge",source_id="apartment",command_id="162"}
+
+ajax_jeedom_device_temperature_celsius{job="ajaxbridge",source_id="apartment"}
+```
+
+The tables below list each metric's own labels; a configured `source_id` is additional. Keep `source_id` and `instance` in alert labels and aggregations when comparing deployments. Adding source labels now does not rewrite historical series.
+
 ## SIA Ingestion Metrics
 
 | Metric | Type | Labels | Meaning |
@@ -166,6 +178,8 @@ Firmware is exported separately as `ajax_jeedom_command_firmware_info`, only for
 
 ## Query Examples
 
+These general examples return every matching scrape target. Add a `source_id` selector for an installation-specific dashboard or alert, and use your configured job name. A `command_id` or device name alone does not identify a command across several Jeedom installations.
+
 Accounts offline:
 
 ```promql
@@ -245,7 +259,9 @@ Forward receiver latency:
 ```promql
 histogram_quantile(
   0.95,
-  sum(rate(ajax_sia_forward_duration_seconds_bucket[5m])) by (le, target)
+  sum by (source_id, instance, le, target) (
+    rate(ajax_sia_forward_duration_seconds_bucket[5m])
+  )
 )
 ```
 
@@ -253,6 +269,6 @@ histogram_quantile(
 
 - Use SIA metrics for alarm/security status.
 - Use Jeedom metrics for power, voltage, current, temperature, battery, and signal diagnostics.
-- Prefer `account`, `zone`, and `device_name` labels for panels and alerts.
+- Filter by `source_id` for each installation, then use local `account`, `zone`, and `device` labels. Device names are display labels and may repeat. Retain `instance` when several bridges represent one source.
 - Timestamps are Unix seconds. SIA may use zero for unseen events; Jeedom omits unknown timestamps.
 - Boolean gauges use `1` for true and `0` for false.

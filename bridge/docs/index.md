@@ -3,6 +3,7 @@
 ## Overview
 
 - [Overview](./overview.md): architecture, install/run basics, data flow, HTTP endpoints, and configuration model.
+- [Multiple installations](./multiple-installations.md): separate house/apartment bridges and Jeedom sources, MQTT/HA identities, card filtering, data volumes, and Prometheus labels.
 
 ## Releases and Upgrades
 

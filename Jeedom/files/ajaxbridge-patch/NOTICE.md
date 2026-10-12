@@ -1,6 +1,6 @@
 # AjaxBridge patch for the Jeedom Ajax Systems plugin
 
-Bundle: 2026.10.06.1. Modified/packaged: 2026-10-06.
+Bundle: 2026.10.09.1. Modified/packaged: 2026-10-09.
 Upstream plugin author: Jeedom SAS (from plugin_info/info.json).
 Local modifications: AjaxBridge contributors.
 
@@ -32,7 +32,7 @@ modified program. See the bundle's LICENSING.md for evidence and details.
 
 - core/class/ajaxSystem.class.php: shared snapshot/callback parsing, battery
   aliases, nested fields and string fault lists, missing-info-command migration,
-  WallSwitch/Relay switch-state normalization; no new polling or API endpoint.
+  WallSwitch/Relay state and safe finite Socket power; no new polling or API endpoint.
 - core/php/jeeAjaxSystem.php: routes data updates through the shared parser.
 - plugin_info/install.php: adds missing info commands during plugin update.
 - core/config/devices/*.json: added/extended telemetry templates for Button,
@@ -50,7 +50,7 @@ modified program. See the bundle's LICENSING.md for evidence and details.
 - Transmitter.json carries forward temperature already in the local baseline;
   it is included deliberately although absent from the subsequent Git diff.
 - Relay.json and Socket templates are not replaced. Relay uses the new shared
-  parser; no Socket feature change is included.
+  parser. Socket power skips invalid cached values/overflow without a second scale.
 
 Local baseline: 0ee0a700a0f1d5fa578e0e51a762a15e98daeb69.
 Telemetry commit: 92fee87fdc1762fd6143de6b4fd6c2ee3cd8ae2a.

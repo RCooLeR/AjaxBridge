@@ -1,5 +1,11 @@
 # Зміни комплекту Jeedom
 
+## 2026.10.09.1 — 09.10.2026
+
+- Socket power skips invalid/nonfinite cached operands and overflow without aborting callbacks. Valid zero, existing scaling and prior power are preserved.
+- No Socket templates, formulas, IDs or history are changed. Added 59 offline regressions: 217 checks, zero API requests.
+- Exact prior packaged class hashes from 2026.09.24/25 and 2026.10.06 remain accepted; unknown local modifications still require review.
+
 ## 2026.10.06.1 — 06.10.2026
 
 - Розширено `HUB_2_PLUS.json`: додано активні uplink-канали Ethernet, Wi-Fi і GSM, налаштування та якісний сигнал Wi-Fi, показники шуму й параметри Jeweller.

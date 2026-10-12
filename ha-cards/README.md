@@ -106,6 +106,26 @@ grid_power_alarm_entities:
 
 `grid_power_alarm_entities` is an explicit Home Assistant-side mapping. Each item may be the entity registry's stable `unique_id` (recommended) or its current `entity_id` for backward compatibility. Using `unique_id` keeps the mapping valid when Home Assistant renames or prefixes an entity id. For each listed Transmitter input, `on` means the physical input is in alarm (utility power is unavailable) and `off` means the input is restored (utility power is available). Unlisted `input_alarm` entities keep their normal safety-alarm meaning; AjaxBridge does not decide which physical input monitors the mains. When the option is omitted or empty, the Grid power chip is not rendered.
 
+## Several installations in one Home Assistant
+
+Both cards accept `source_id` and `area_ids`. Set `source_id` to the new bridge's `AJAXBRIDGE_SOURCE_ID`; matching is exact. Omitted or empty `source_id` selects the existing legacy installation whose Ajax entities have no source namespace. It does not include a newly prefixed installation, even when both hubs reuse the same account, zone number, device names, or Jeedom command IDs. Keep the current house bridge and card without a source ID to preserve their identities.
+
+For a new apartment bridge configured with `AJAXBRIDGE_SOURCE_ID=apartment`:
+
+```yaml
+type: custom:ajaxbridge-detailed-card
+source_id: apartment
+account: "<apartment SIA account>"
+area_ids:
+  - apartment_kitchen
+  - apartment_hall
+dahua_base: https://ha.example.test/apartment-dahua-bridge
+```
+
+Use the same `source_id` and `area_ids` on `custom:ajaxbridge-chips-card`. `account` remains an optional hub filter within the selected source. Source selection excludes unknown or foreign Ajax entities. `area_ids` uses Home Assistant's stable area IDs, not display names, and restricts rooms, device controls, events, climate, hero media, summary details, and camera analytics. An explicit empty list selects no areas.
+
+Non-Ajax entities without source metadata, such as existing Dahua cameras and independent climate sensors, need explicit `area_ids` on a source-scoped card. A source ID alone includes only ancillary entities carrying that exact `source_id`. Add house area IDs to the legacy house cards as well when both properties share Home Assistant; unscoped legacy ancillary discovery retains its existing behavior. Use separate HA areas for the two properties. `dahua_base` applies only to camera channels that survive the card's source and area selection.
+
 Ready-to-paste examples live in [`examples/`](./examples/):
 
 - [`ajaxbridge-detailed-card.yaml`](./examples/ajaxbridge-detailed-card.yaml)
@@ -118,6 +138,7 @@ Reference notes for DahuaBridge camera discovery, live playback, and SMD/IVS roo
 - Rooms come from Home Assistant areas.
 - Room hero backgrounds prefer area pictures and fall back to linked image or camera entities.
 - AjaxBridge devices come from the Home Assistant device/entity registries plus MQTT entities published by AjaxBridge.
+- An omitted `source_id` selects legacy Ajax entities; a configured source selects only its exact namespace. `area_ids` bounds all room data and ancillary integrations to the chosen Home Assistant areas.
 - Grid-power status is derived only from the `input_alarm` entity or unique ids explicitly listed in `grid_power_alarm_entities`.
 - Summary chips are rendered only when their backing mapping or discovered HA source exists. Security mode requires a mode or active-alarm source; SMD/IVS requires a configured Dahua analytics channel; switch counts require discovered matching devices. A configured source with a valid zero value remains visible (including `Alerts: 0`); an absent source does not produce a `0/0` placeholder.
 - Summary chips are interactive: select one to see the sources behind its total, including the meaning of `x/y` device counts. Mapped grid outages are shown as informational status and are excluded from Alerts.

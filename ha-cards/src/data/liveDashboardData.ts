@@ -20,8 +20,8 @@ import type {
   SystemState,
 } from '../models/dashboard';
 import { dashboardData as fallbackDashboardData } from './loadDashboardData';
-import type { HomeAssistant, HomeAssistantState } from '../ha/types';
-import { ajaxDeviceHealth, ajaxEntityOwner, ajaxEntitySemantic, ajaxRegistryOwner, diagnosticHealth, SECURITY_SIGNALS } from '../utils/ajaxSemantics';
+import type { DashboardScope, HomeAssistant, HomeAssistantState } from '../ha/types';
+import { ajaxDeviceHealth, ajaxEntityOwner, ajaxEntitySemantic, ajaxIdentity, ajaxOwnerAccount, ajaxOwnerIdentity, ajaxRegistryOwner, ajaxSourceId, diagnosticHealth, SECURITY_SIGNALS } from '../utils/ajaxSemantics';
 import {
   classifyAjaxDiagnosticMetric,
   controlStateLabel,
@@ -186,6 +186,7 @@ const EMPTY_REGISTRIES: RegistrySnapshot = {
 };
 const EMPTY_ROOM_SMD_IVS_COUNTS: RoomSmdIvsCountsByRoom = {};
 const EMPTY_GRID_POWER_ALARM_ENTITIES: readonly string[] = [];
+const EMPTY_DASHBOARD_SCOPE: DashboardScope = {};
 const loggedDahuaDebug = new Set<string>();
 const ISSUE_SIGNALS = new Set([
   'alarm',
@@ -225,6 +226,7 @@ export function useDashboardData(
   account?: string,
   dahuaBase?: string,
   gridPowerAlarmEntities: readonly string[] = EMPTY_GRID_POWER_ALARM_ENTITIES,
+  scope: DashboardScope = EMPTY_DASHBOARD_SCOPE,
 ): DashboardData {
   const [registries, setRegistries] = useState<RegistrySnapshot | null>(null);
   const [smdIvsSnapshot, setSmdIvsSnapshot] = useState<{
@@ -281,9 +283,14 @@ export function useDashboardData(
     () => buildRegistryIndex(registries ?? EMPTY_REGISTRIES),
     [registries],
   );
+  const { sourceId, areaIds } = scope;
+  const scopedInputs = useMemo(
+    () => scopeDashboardInputs(hass?.states ?? {}, registryIndex, { sourceId, areaIds }),
+    [hass, registryIndex, sourceId, areaIds],
+  );
   const smdIvsSignature = useMemo(
-    () => (hass ? dahuaBridgeChannelSignature(hass.states, registryIndex, normalizedDahuaBase) : ''),
-    [hass, registryIndex, normalizedDahuaBase],
+    () => (hass ? dahuaBridgeChannelSignature(scopedInputs.states, scopedInputs.registryIndex, normalizedDahuaBase) : ''),
+    [hass, scopedInputs, normalizedDahuaBase],
   );
   const roomSmdIvsCounts = smdIvsSignature && smdIvsSnapshot.signature === smdIvsSignature
     ? smdIvsSnapshot.counts
@@ -293,7 +300,7 @@ export function useDashboardData(
     if (!hass) {
       return Promise.resolve(EMPTY_ROOM_SMD_IVS_COUNTS);
     }
-    return loadSmdIvsCountsByRoom(hass.states, registryIndex, normalizedDahuaBase, signal);
+    return loadSmdIvsCountsByRoom(scopedInputs.states, scopedInputs.registryIndex, normalizedDahuaBase, signal);
   });
 
   useEffect(() => {
@@ -338,14 +345,15 @@ export function useDashboardData(
     }
 
     return buildDashboardDataFromHomeAssistant(
-      hass.states,
-      registryIndex,
+      scopedInputs.states,
+      scopedInputs.registryIndex,
       account,
       roomSmdIvsCounts,
       gridPowerAlarmEntities,
       Boolean(smdIvsSignature),
+      { sourceId, areaIds },
     );
-  }, [account, gridPowerAlarmEntities, hass, registryIndex, roomSmdIvsCounts, smdIvsSignature]);
+  }, [account, gridPowerAlarmEntities, hass, scopedInputs, sourceId, areaIds, roomSmdIvsCounts, smdIvsSignature]);
 
   return dashboardData;
 }
@@ -387,7 +395,11 @@ export function buildDashboardDataFromHomeAssistant(
   roomSmdIvsCounts: RoomSmdIvsCountsByRoom = {},
   gridPowerAlarmEntities: readonly string[] = [],
   dahuaAnalyticsConfigured = false,
+  scope: DashboardScope = EMPTY_DASHBOARD_SCOPE,
 ): DashboardData {
+  const scopedInputs = scopeDashboardInputs(states, registryIndex, scope);
+  states = scopedInputs.states;
+  registryIndex = scopedInputs.registryIndex;
   const { areas, areaById, deviceById, devices, entities, entitiesByDeviceId, entitiesByAreaId, resolvedAreaByDeviceId } =
     registryIndex;
   const gridPowerAlarmSelectors = new Set(
@@ -432,11 +444,67 @@ export function buildDashboardDataFromHomeAssistant(
       entities,
       accountFilter,
       gridPowerAlarmSelectors.size,
-      dahuaAnalyticsConfigured || Object.keys(roomSmdIvsCounts).length > 0,
+      (dahuaAnalyticsConfigured || Object.keys(roomSmdIvsCounts).length > 0)
+        && (!hasDashboardScope(scope) || dahuaDevices.some((device) => device.cameraLike)),
     ),
     rooms,
     devices: resolvedDevices.map(toPublicDevice),
     events: resolvedEvents,
+  };
+}
+
+function hasDashboardScope(scope: DashboardScope): boolean {
+  return Boolean(scope.sourceId?.trim()) || scope.areaIds !== undefined;
+}
+
+/** Restrict inputs before any room, action, summary or analytics discovery sees them. */
+export function scopeDashboardInputs(
+  states: Record<string, HomeAssistantState>,
+  registryIndex: RegistryIndex,
+  scope: DashboardScope = EMPTY_DASHBOARD_SCOPE,
+): { states: Record<string, HomeAssistantState>; registryIndex: RegistryIndex } {
+  const sourceId = scope.sourceId?.trim() ?? '';
+  const areaIds = scope.areaIds === undefined ? null : new Set(scope.areaIds.map((areaId) => areaId.trim()).filter(Boolean));
+  const registeredOwners = new Map(registryIndex.devices.flatMap((device) => {
+    const owner = ajaxRegistryOwner(extractAjaxIdentifiers(device));
+    return owner ? [[owner, device] as const] : [];
+  }));
+  const canonicalDevice = (entry: HomeAssistantEntityEntry) => {
+    const owner = ajaxEntityOwner(entry.unique_id, states[entry.entity_id]?.attributes ?? {});
+    return (owner && registeredOwners.get(owner)) || registryIndex.deviceById.get(entry.device_id ?? '');
+  };
+  const entities = registryIndex.entities.filter((entry) => {
+    const device = canonicalDevice(entry);
+    const roomId = (device && registryIndex.resolvedAreaByDeviceId.get(device.id)) ?? resolveRoomIdForEntity(entry.entity_id, registryIndex);
+    if (areaIds && (!roomId || !areaIds.has(roomId))) return false;
+
+    const entitySource = ajaxSourceId(entry.unique_id, states[entry.entity_id]?.attributes ?? {}, device ? extractAjaxIdentifiers(device) : []);
+    const ajax = Boolean(ajaxIdentity(entry.unique_id)) || Boolean(device && isAjaxDevice(device));
+    if (ajax) return entitySource === sourceId;
+    if (entitySource) return entitySource === sourceId;
+    if (!sourceId) return true;
+    // Ancillary integrations without source metadata are included only through
+    // an explicit area selection. Selecting an Ajax source alone is not global.
+    return Boolean(areaIds && roomId && areaIds.has(roomId));
+  });
+  const retainedDeviceIds = new Set(entities.map((entry) => entry.device_id).filter((id): id is string => Boolean(id)));
+  for (const entry of entities) {
+    const device = canonicalDevice(entry);
+    if (device) retainedDeviceIds.add(device.id);
+  }
+  for (const id of retainedDeviceIds) {
+    const parentId = registryIndex.deviceById.get(id)?.via_device_id;
+    if (parentId) retainedDeviceIds.add(parentId);
+  }
+  const scopedRegistry = buildRegistryIndex({
+    areas: registryIndex.areas.filter((area) => !areaIds || areaIds.has(area.area_id)),
+    devices: registryIndex.devices.filter((device) => retainedDeviceIds.has(device.id)),
+    entities,
+  });
+  const selectedEntities = new Set(entities.map((entry) => entry.entity_id));
+  return {
+    states: Object.fromEntries(Object.entries(states).filter(([entityId]) => selectedEntities.has(entityId))),
+    registryIndex: scopedRegistry,
   };
 }
 
@@ -451,15 +519,15 @@ function buildAjaxDevices(
   const output: ResolvedDevice[] = [];
   const groups = new Map<string, { device: HomeAssistantDeviceEntry; entries: HomeAssistantEntityEntry[]; roomId?: string }>();
   const registeredOwners = new Map(devices.flatMap((device) => {
-    const owner = ajaxRegistryOwner(extractIdentifiers(device));
+    const owner = ajaxRegistryOwner(extractAjaxIdentifiers(device));
     return owner ? [[owner, device] as const] : [];
   }));
   for (const device of devices) {
     const entries = entitiesByDeviceId.get(device.id) ?? [];
-    if ((!isAjaxDevice(device) && !entries.some((entry) => /^ajaxbridge_/i.test(entry.unique_id ?? ''))) || isLegacyAjax2PrometheusDevice(device)) continue;
+    if ((!isAjaxDevice(device) && !entries.some((entry) => ajaxIdentity(entry.unique_id))) || isLegacyAjax2PrometheusDevice(device)) continue;
     for (const entry of entries) {
       if (isLegacyAjax2PrometheusEntity(entry) || isEntityHiddenOrDisabled(entry)) continue;
-      const owner = ajaxEntityOwner(entry.unique_id, states[entry.entity_id]?.attributes ?? {}) ?? ajaxRegistryOwner(extractIdentifiers(device)) ?? device.id;
+      const owner = ajaxEntityOwner(entry.unique_id, states[entry.entity_id]?.attributes ?? {}) ?? ajaxRegistryOwner(extractAjaxIdentifiers(device)) ?? device.id;
       const metadata = registeredOwners.get(owner) ?? device;
       const group = groups.get(owner) ?? { device: metadata, entries: [], roomId: resolvedAreaByDeviceId.get(metadata.id) ?? resolvedAreaByDeviceId.get(device.id) };
       group.entries.push(entry);
@@ -470,7 +538,7 @@ function buildAjaxDevices(
   for (const [owner, group] of groups) {
     const deviceEntry = group.device;
 
-    const account = owner.match(/^sia_(.+)_zone_\d+$/)?.[1] ?? extractAjaxAccount(deviceEntry);
+    const account = ajaxOwnerAccount(owner) ?? extractAjaxAccount(deviceEntry);
     if (accountFilter && account && account.toLowerCase() !== accountFilter.toLowerCase()) {
       continue;
     }
@@ -1088,7 +1156,8 @@ function buildSystemState(
   const gridPower = summarizeGridPower(devices);
   const accountEntities = entities.filter((entry) => {
     const owner = ajaxEntityOwner(entry.unique_id, states[entry.entity_id]?.attributes ?? {});
-    return owner?.startsWith('account_') && (!accountFilter || owner === `account_${accountFilter.toLowerCase()}`);
+    return Boolean(owner && ajaxOwnerIdentity(owner).startsWith('account_')
+      && (!accountFilter || ajaxOwnerAccount(owner) === accountFilter.toLowerCase()));
   });
   const accountModeSources = accountEntities
     .filter((entry) => ajaxEntitySemantic(entry, states[entry.entity_id]?.attributes) === 'mode')
@@ -1734,7 +1803,7 @@ function entityDisplayName(entry: HomeAssistantEntityEntry, state?: HomeAssistan
 
 function isAjaxDevice(deviceEntry: HomeAssistantDeviceEntry): boolean {
   return /^ajax(?: systems| via jeedom)?$/i.test(safeString(deviceEntry.manufacturer))
-    || extractIdentifiers(deviceEntry).some((identifier) => /^ajaxbridge_/i.test(identifier));
+    || extractAjaxIdentifiers(deviceEntry).some((identifier) => ajaxIdentity(identifier));
 }
 
 function isLegacyAjax2PrometheusDevice(deviceEntry: HomeAssistantDeviceEntry): boolean {
@@ -1761,20 +1830,20 @@ function isLegacyAjax2PrometheusEntity(entityEntry: HomeAssistantEntityEntry): b
 }
 
 function isAjaxAccountDevice(deviceEntry: HomeAssistantDeviceEntry): boolean {
-  return safeString(deviceEntry.model).toLowerCase().includes('account') || extractIdentifiers(deviceEntry).some((value) => value.startsWith('ajaxbridge_account_'));
+  return safeString(deviceEntry.model).toLowerCase().includes('account') || extractAjaxIdentifiers(deviceEntry).some((value) => ajaxIdentity(value)?.identity.startsWith('ajaxbridge_account_'));
 }
 
 function extractAjaxAccount(deviceEntry: HomeAssistantDeviceEntry): string | null {
-  for (const identifier of extractIdentifiers(deviceEntry)) {
-    if (identifier.startsWith('ajaxbridge_account_')) {
-      return identifier.slice('ajaxbridge_account_'.length);
-    }
-    const zoneIndex = identifier.indexOf('_zone_');
-    if (identifier.startsWith('ajaxbridge_') && zoneIndex > 'ajaxbridge_'.length) {
-      return identifier.slice('ajaxbridge_'.length, zoneIndex);
-    }
-  }
-  return null;
+  const owner = ajaxRegistryOwner(extractAjaxIdentifiers(deviceEntry));
+  return owner ? ajaxOwnerAccount(owner) : null;
+}
+
+function extractAjaxIdentifiers(deviceEntry: HomeAssistantDeviceEntry): string[] {
+  const raw = deviceEntry.identifiers;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry: unknown) => Array.isArray(entry)
+    ? entry.filter((value): value is string => typeof value === 'string')
+    : typeof entry === 'string' ? [entry] : []);
 }
 
 function extractIdentifiers(deviceEntry: HomeAssistantDeviceEntry): string[] {

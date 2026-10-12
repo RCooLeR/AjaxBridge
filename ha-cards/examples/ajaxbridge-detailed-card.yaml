@@ -3,6 +3,9 @@ path: ajaxbridge
 panel: true
 cards:
   - type: custom:ajaxbridge-detailed-card
+    # Omit source_id for the legacy house; set it on a new installation:
+    # source_id: apartment
+    # area_ids: [apartment_kitchen, apartment_hall]
     default_room: living-room
     dahua_base: https://ha.example.test/dahua-bridge
     grid_power_alarm_entities:

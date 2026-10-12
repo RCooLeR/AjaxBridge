@@ -14,6 +14,9 @@ services:
       - "8080:8080"
       - "8099:8099"
     environment:
+      # Leave empty for an existing installation to preserve its MQTT/HA identities.
+      # New installations can use apartment; see docs/multiple-installations.md.
+      AJAXBRIDGE_SOURCE_ID: "${AJAXBRIDGE_SOURCE_ID:-}"
       AJAXBRIDGE_HTTP_ADDR: ":8080"
       AJAXBRIDGE_SIA_ADDR: ":8099"
       AJAXBRIDGE_ACCOUNT: "0001"
@@ -25,6 +28,7 @@ services:
       AJAXBRIDGE_READ_TIMEOUT: "120s"
       AJAXBRIDGE_FORWARD_TIMEOUT: "5s"
       AJAXBRIDGE_FORWARD_REQUIRE_ACK: "false"
+      # File bases receive a source directory, e.g. /data/apartment/devices.json.
       AJAXBRIDGE_DEVICES_PATH: "/data/devices.json"
       AJAXBRIDGE_NOTIFICATIONS_PATH: "/data/notifications.json"
       AJAXBRIDGE_JEEDOM_STORE_PATH: "/data/jeedom.json"
@@ -33,6 +37,8 @@ services:
       # AJAXBRIDGE_ENCRYPTION_KEY: "REPLACE_WITH_32_HEX_AES_KEY"
 
       # Optional: publish Home Assistant MQTT discovery and retained state.
+      # With SOURCE_ID=apartment, topic/client bases become
+      # ajaxbridge/apartment and ajaxbridge-apartment, including explicit bases.
       # AJAXBRIDGE_MQTT_BROKER: "tcp://homeassistant.local:1883"
       # AJAXBRIDGE_MQTT_USERNAME: "mqtt-user"
       # AJAXBRIDGE_MQTT_PASSWORD: "mqtt-password"
@@ -40,6 +46,8 @@ services:
       # AJAXBRIDGE_MQTT_DISCOVERY: "true"
 
       # Optional: consume Jeedom Ajax plugin values from MQTT Manager.
+      # With SOURCE_ID=apartment, configure MQTT Manager root_topic=jeedom_apartment.
+      # Unset input/control topic settings then use that root automatically.
       # AJAXBRIDGE_JEEDOM_ENABLED: "true"
       # AJAXBRIDGE_JEEDOM_EVENT_TOPIC: "jeedom/cmd/event/#"
       # AJAXBRIDGE_JEEDOM_DISCOVERY_TOPIC: "jeedom/discovery/eqLogic/#"
@@ -57,7 +65,8 @@ services:
       # Use an IP/hostname reachable from inside this container.
       # AJAXBRIDGE_FORWARD_ADDR: "home-assistant.example:12345,cms.example:7700"
     volumes:
-      # The app creates/updates /data/devices.json as new Ajax zones are seen.
+      # Empty source uses /data/devices.json; apartment uses /data/apartment/devices.json.
+      # Use a separate host data directory per bridge in production.
       - ./data:/data
     healthcheck:
       test: ["CMD", "/app/ajaxbridge", "healthcheck"]

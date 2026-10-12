@@ -57,6 +57,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	cfg = cfg.WithSourceNamespace()
 
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -81,8 +82,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 		return err
 	}
 
-	registry := prometheus.NewRegistry()
-	metricSet := metrics.New(registry)
+	registry, metricSet := newMetricRegistry(cfg.SourceID)
 	stateEngine := state.NewEngine(cfg.OfflineGrace, devices)
 	metricSet.SetSnapshot(stateEngine.Snapshot())
 	notificationStore, err := notifications.Load(ctx, cfg.NotificationsPath)
@@ -97,15 +97,18 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 	var mqttQueue chan hamqtt.Update
 	if cfg.MQTTEnabled() {
 		mqttPublisher = hamqtt.New(hamqtt.Config{
-			Broker:          cfg.MQTTBroker,
-			Username:        cfg.MQTTUsername,
-			Password:        cfg.MQTTPassword,
-			ClientID:        cfg.MQTTClientID,
-			TopicPrefix:     cfg.MQTTTopicPrefix,
-			Discovery:       cfg.MQTTDiscovery,
-			DiscoveryPrefix: cfg.MQTTDiscoveryPrefix,
-			Timeout:         cfg.MQTTTimeout,
-			Retain:          cfg.MQTTRetain,
+			SourceID:                   cfg.SourceID,
+			Broker:                     cfg.MQTTBroker,
+			Username:                   cfg.MQTTUsername,
+			Password:                   cfg.MQTTPassword,
+			ClientID:                   cfg.MQTTClientID,
+			TopicPrefix:                cfg.MQTTTopicPrefix,
+			Discovery:                  cfg.MQTTDiscovery,
+			DiscoveryPrefix:            cfg.MQTTDiscoveryPrefix,
+			HomeAssistantStatusTopic:   cfg.MQTTHomeAssistantStatusTopic,
+			HomeAssistantOnlinePayload: cfg.MQTTHomeAssistantOnlinePayload,
+			Timeout:                    cfg.MQTTTimeout,
+			Retain:                     cfg.MQTTRetain,
 		}, log.With().Str("component", "mqtt").Logger())
 		mqttPublisher.ConnectAsync(ctx)
 		mqttQueue = make(chan hamqtt.Update, 1)
@@ -129,6 +132,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 	if cfg.JeedomEnabled {
 		jeedomStoreLoaded := false
 		resolver := jeedom.NewCatalogResolver(devices, jeedom.CatalogResolverConfig{
+			SourceID:         cfg.SourceID,
 			Account:          cfg.Account,
 			AccountNames:     cfg.JeedomAccountNames,
 			DiscoverUnlinked: cfg.JeedomDiscoverUnlinked,
@@ -159,6 +163,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 				CommandPayload:       cfg.JeedomControlPayload,
 			}, jeedomStore, mqttPublisher, log.With().Str("component", "jeedom_control").Logger())
 			jeedomPublisher = jeedom.NewPublisher(jeedom.PublisherConfig{
+				SourceID:         cfg.SourceID,
 				StateTopicPrefix: cfg.JeedomStateTopicPrefix,
 				Discovery:        cfg.JeedomDiscovery,
 				DiscoveryPrefix:  cfg.MQTTDiscoveryPrefix,
@@ -197,6 +202,9 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 		application.mqtt.AddConnectHandler(func(context.Context) {
 			application.publishRetainedMQTT(ctx)
 		})
+		if err := application.mqtt.StartHomeAssistantRecovery(ctx, application.publishRetainedMQTT); err != nil {
+			log.Warn().Err(err).Msg("Home Assistant MQTT recovery subscription not started")
+		}
 	}
 
 	httpServer := httpapi.New(
@@ -211,6 +219,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 		log.With().Str("component", "http").Logger(),
 		application.handleCatalogChanged,
 	)
+	httpServer.SetSourceID(cfg.SourceID)
 	siaServer := sia.NewServer(cfg.SIAListenAddr, cfg.ReadTimeout, application.handleSIAFrame, log.With().Str("component", "sia").Logger())
 
 	if cfg.JeedomEnabled && mqttPublisher != nil {
@@ -264,6 +273,7 @@ func Run(parent context.Context, cfg config.Config, log zerolog.Logger) error {
 		application.enqueueMQTTUpdate(hamqtt.Update{
 			Accounts: initialSnapshot.Accounts,
 			Zones:    initialSnapshot.Zones,
+			Revision: initialSnapshot.Revision,
 		})
 	}
 
@@ -307,6 +317,7 @@ func (o notificationObserver) ObserveJeedomControl(ctx context.Context, result j
 func (a *App) handleCatalogChanged(snapshot state.Snapshot) {
 	if a.jeedom != nil {
 		resolver := jeedom.NewCatalogResolver(a.devices, jeedom.CatalogResolverConfig{
+			SourceID:         a.cfg.SourceID,
 			Account:          a.cfg.Account,
 			AccountNames:     a.cfg.JeedomAccountNames,
 			DiscoverUnlinked: a.cfg.JeedomDiscoverUnlinked,
@@ -318,20 +329,35 @@ func (a *App) handleCatalogChanged(snapshot state.Snapshot) {
 		a.enqueueJeedomPublish(devices, "publish Jeedom device after catalog change")
 	}
 	a.metrics.SetSnapshot(snapshot)
-	a.enqueueMQTTUpdate(hamqtt.Update{Accounts: snapshot.Accounts, Zones: snapshot.Zones})
+	a.enqueueMQTTUpdate(hamqtt.Update{Accounts: snapshot.Accounts, Zones: snapshot.Zones, Revision: snapshot.Revision})
+}
+
+// Constant labels cover every collector, including dynamic Jeedom snapshots
+// and Go runtime metrics. The empty namespace retains the existing metric API.
+func newMetricRegistry(sourceID string) (*prometheus.Registry, *metrics.Metrics) {
+	registry := prometheus.NewRegistry()
+	var registerer prometheus.Registerer = registry
+	if sourceID != "" {
+		registerer = prometheus.WrapRegistererWith(prometheus.Labels{"source_id": sourceID}, registry)
+	}
+	return registry, metrics.New(registerer)
 }
 
 func (a *App) publishRetainedMQTT(ctx context.Context) {
 	if a == nil || a.mqtt == nil {
 		return
 	}
-	// MQTT retained messages can disappear after broker maintenance, so every
-	// connect/reconnect republishes the last known SIA and Jeedom surfaces.
-	snapshot := a.state.Snapshot()
-	if err := a.mqtt.PublishUpdate(ctx, hamqtt.Update{Accounts: snapshot.Accounts, Zones: snapshot.Zones}); err != nil {
-		a.log.Debug().Err(err).Msg("publish retained MQTT snapshot")
+	// Broker reconnects and HA-only restarts both need unchanged discovery and
+	// state republished. Serialize full replays without blocking live telemetry.
+	if err := a.mqtt.ReplayRetained(ctx, func(replayCtx context.Context) {
+		snapshot := a.state.Snapshot()
+		if err := a.mqtt.PublishSnapshot(replayCtx, snapshot); err != nil {
+			a.log.Debug().Err(err).Msg("publish retained MQTT snapshot")
+		}
+		a.publishJeedomDevices(replayCtx, a.storedJeedomDevices(), "publish retained Jeedom MQTT state")
+	}); err != nil {
+		a.log.Debug().Err(err).Msg("prepare retained MQTT snapshot replay")
 	}
-	a.publishJeedomDevices(ctx, a.storedJeedomDevices(), "publish retained Jeedom MQTT state")
 }
 
 func (a *App) storedJeedomDevices() []jeedom.Device {
@@ -773,13 +799,13 @@ func (a *App) refreshOnline(ctx context.Context) {
 		case now := <-ticker.C:
 			snapshot := a.state.RefreshOnline(now.UTC())
 			a.metrics.SetSnapshot(snapshot)
-			a.enqueueMQTTUpdate(hamqtt.Update{Accounts: snapshot.Accounts})
+			a.enqueueMQTTUpdate(hamqtt.Update{Accounts: snapshot.Accounts, Revision: snapshot.Revision})
 		}
 	}
 }
 
 func mqttUpdateForEvent(snapshot state.Snapshot, evt *event.Normalized) hamqtt.Update {
-	update := hamqtt.Update{}
+	update := hamqtt.Update{Revision: snapshot.Revision}
 	if evt == nil {
 		return update
 	}

@@ -1,0 +1,42 @@
+services:
+  jeedom-appt:
+    container_name: jeedom-appt
+    image: ajaxbridge-jeedom-appt:4.6-bookworm
+    build:
+      context: .
+    pull_policy: build
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Kyiv
+      ROOT_PASSWD: ${JEEDOM_ROOT_PASSWORD:?Set a private root password}
+      RESTOREBACKUP: "NO"
+      UPDATEJEEDOM: "NO"
+    ports:
+      - "${JEEDOM_PORT:-9081}:80"
+    volumes:
+      - type: volume
+        source: jeedom-appt-html-v2
+        target: /var/www/html
+        volume:
+          nocopy: true
+      - type: volume
+        source: jeedom-appt-mysql-v2
+        target: /var/lib/mysql
+        volume:
+          nocopy: true
+      - ./99-appt-local.cnf:/etc/mysql/mariadb.conf.d/99-appt-local.cnf:ro
+      - ../../Jeedom:/opt/ajaxbridge-jeedom:ro
+    tmpfs:
+      - /tmp/jeedom
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/www/html/core/config/common.config.php && mariadb-admin --silent ping && curl -fsS --max-time 5 http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 10m
+
+volumes:
+  jeedom-appt-html-v2:
+    name: jeedom-appt-html-v2
+  jeedom-appt-mysql-v2:
+    name: jeedom-appt-mysql-v2

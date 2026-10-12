@@ -22,6 +22,8 @@ Home Assistant reads the discovery configs under the discovery prefix, default `
 
 SIA entities and Jeedom entities can belong to the same Home Assistant device. This is how the bridge prevents duplicate devices when both sources describe the same physical Ajax device.
 
+For another house or apartment, configure a separate bridge with a stable `AJAXBRIDGE_SOURCE_ID` before its first discovery. The source ID separates MQTT/HA identities even when Ajax zones or Jeedom command IDs overlap. Keep an existing installation's source ID empty to preserve its current entities. New cards use a matching `source_id`; cards with an omitted/empty source select legacy Ajax devices only. Use `area_ids` for ancillary data such as cameras/climate without source metadata, plus distinct Jeedom roots/data volumes; see [multiple installations](./multiple-installations.md) for the complete setup.
+
 ## Install And Configure Home Assistant
 
 1. Install Home Assistant using the official installation guide.
@@ -73,9 +75,37 @@ MQTT connected
 
 If MQTT is unavailable, SIA handling continues. Ajax ACK responses are not blocked by MQTT publishing.
 
+### Recovery After Home Assistant Restarts
+
+The bridge listens for Home Assistant's MQTT birth message (`online` on
+`homeassistant/status`). It then republishes availability, discovery, and the
+latest cached SIA/Jeedom state even when the bridge itself stayed connected and
+the values did not change. Existing entity/device IDs and history are preserved;
+actuator commands are never replayed. Cached data is not a new device reading.
+
+Replays use a 2–5 second randomized delay to spread load between installations.
+One worker coalesces repeated birth messages and stops on bridge shutdown.
+Broker reconnects also trigger a snapshot replay. Retained discovery remains
+enabled; birth replay provides an additional recovery path, not a guarantee
+against broker or Home Assistant errors.
+
+- `AJAXBRIDGE_MQTT_HA_STATUS_TOPIC`: default `homeassistant/status`; explicitly
+  set an empty string to disable birth-triggered replay.
+- `AJAXBRIDGE_MQTT_HA_ONLINE_PAYLOAD`: default `online`; must match HA's configured
+  birth payload exactly.
+
+These settings describe the receiving Home Assistant instance, so `source_id`
+does not alter them. Configure both bridges with the same birth topic when they
+serve the same HA, even though their outgoing topics/identities remain isolated.
+If HA uses a custom discovery prefix, its birth topic still needs to match the
+separate setting in HA's MQTT options. See the official
+[birth message guidance](https://www.home-assistant.io/integrations/mqtt/#birth-and-last-will-messages).
+
 ## MQTT Topics
 
 Default configuration:
+
+These defaults describe an empty source ID. A nonempty source ID is appended to outgoing client/topic bases and namespaces discovery identities; for example `apartment` uses the MQTT state prefix `ajaxbridge/apartment` and availability topic `ajaxbridge/apartment/status`.
 
 | Setting | Default |
 | --- | --- |

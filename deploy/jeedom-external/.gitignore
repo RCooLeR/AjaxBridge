@@ -1,0 +1,5 @@
+secrets/
+backups/
+*.sql
+*.tar.gz
+*.env

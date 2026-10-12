@@ -1,6 +1,6 @@
 <?php
 
-/* Modified 2026-10-06 by AjaxBridge contributors: expanded device telemetry, Hub 2 Plus active-channel derivation and state parsing. See ajaxbridge-patch/NOTICE.md and license texts; original Jeedom notices remain applicable. */
+/* Modified 2026-10-09 by AjaxBridge contributors: expanded telemetry, Hub 2 Plus channel derivation, state parsing and safe Socket power calculation. See ajaxbridge-patch/NOTICE.md and license texts; original Jeedom notices remain applicable. */
 
 /* This file is part of Jeedom.
 *
@@ -475,7 +475,18 @@ class ajaxSystem extends eqLogic {
       $current = $this->getCmd('info', 'currentMA');
       $voltage = $this->getCmd('info', 'voltage');
       if (is_object($current) && is_object($voltage)) {
-        $this->checkAndUpdateCmd('power', $current->execCmd() * $voltage->execCmd());
+        // execCmd already applies the command's configured scale (e.g. mA -> A).
+        // Missing/invalid cached readings must not abort the rest of a callback
+        // batch or fabricate a zero power reading. A measured numeric zero is valid.
+        $currentValue = $current->execCmd();
+        $voltageValue = $voltage->execCmd();
+        if (is_numeric($currentValue) && is_numeric($voltageValue)
+            && is_finite((float) $currentValue) && is_finite((float) $voltageValue)) {
+          $power = $currentValue * $voltageValue;
+          if (is_finite((float) $power)) {
+            $this->checkAndUpdateCmd('power', $power);
+          }
+        }
       }
     }
   }

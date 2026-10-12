@@ -55,6 +55,8 @@ type Zone struct {
 type Snapshot struct {
 	Accounts []Account `json:"accounts"`
 	Zones    []Zone    `json:"zones"`
+	// Revision orders in-process publications without changing the JSON API.
+	Revision uint64 `json:"-"`
 }
 
 type Engine struct {
@@ -64,6 +66,7 @@ type Engine struct {
 	accounts     map[string]*Account
 	zones        map[string]*Zone
 	directAlarms map[string]bool
+	revision     uint64
 }
 
 func NewEngine(offlineGrace time.Duration, devices *devicecatalog.Catalog) *Engine {
@@ -73,6 +76,7 @@ func NewEngine(offlineGrace time.Duration, devices *devicecatalog.Catalog) *Engi
 		accounts:     make(map[string]*Account),
 		zones:        make(map[string]*Zone),
 		directAlarms: make(map[string]bool),
+		revision:     1,
 	}
 	engine.seedCatalogDevices()
 	return engine
@@ -81,6 +85,7 @@ func NewEngine(offlineGrace time.Duration, devices *devicecatalog.Catalog) *Engi
 func (e *Engine) Apply(evt event.Normalized) Snapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.revision++
 
 	account := e.account(evt.Account)
 	account.LastEventAt = maxTime(account.LastEventAt, evt.ReceivedAt)
@@ -184,6 +189,7 @@ func (e *Engine) Apply(evt event.Normalized) Snapshot {
 func (e *Engine) RefreshOnline(now time.Time) Snapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.revision++
 	e.refreshOnlineLocked(now)
 	return e.snapshotLocked()
 }
@@ -191,6 +197,7 @@ func (e *Engine) RefreshOnline(now time.Time) Snapshot {
 func (e *Engine) ReloadCatalog() Snapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.revision++
 	e.seedCatalogDevices()
 	return e.snapshotLocked()
 }
@@ -276,6 +283,7 @@ func (e *Engine) snapshotLocked() Snapshot {
 	snapshot := Snapshot{
 		Accounts: make([]Account, 0, len(e.accounts)),
 		Zones:    make([]Zone, 0, len(e.zones)),
+		Revision: e.revision,
 	}
 	for _, account := range e.accounts {
 		snapshot.Accounts = append(snapshot.Accounts, *account)
