@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 2.1.1 - 2026-10-12
+
+Upgrade and rollback guidance: [2.1.1 release notes](bridge/docs/releases/2.1.1.md).
+
+- Update Go to 1.27.2, `golang.org/x/net` to 0.60.0, and Vite to 8.3.3, including the security fixes needed for PR #10. Keep the digest-pinned Go builder aligned with the module toolchain.
+- Republish unchanged MQTT discovery and cached SIA/Jeedom state after Home Assistant announces it is online. Coalesce repeated startup messages, stagger bridge replies, and never replay actuator commands. Internal SIA publication revisions prevent an older replay from overwriting newer live state.
+- Isolate additional bridge installations with an opt-in source ID, separate Jeedom input roots, scoped data paths, MQTT/HA identities, Prometheus labels, and dashboard filters. An empty source ID preserves the existing installation's defaults.
+- Add an optional Jeedom Docker runtime with bind-mounted HTML and an existing external MySQL 8.4 server, explicit bootstrap/migration, private configuration, guarded compatibility patches, and preserved command/configuration data.
+- Fix MySQL 8.4 listener maintenance by quoting reserved identifiers; preserve original core files and ownership. Keep service PID files readable by Jeedom without relaxing private credential-file permissions.
+- Include Jeedom bundle 2026.10.09.1 with reviewed upstream compatibility, a guarded offline installer, Hub 2 Plus communication telemetry, and invalid/nonfinite Socket telemetry handling that preserves valid zero values and existing IDs/formulas.
+- Republish the complete Jeedom catalog after linking changes; expose Hub transport and radio diagnostics without treating an enabled interface as a connected uplink, and separate analytics categories from scrollable room breakdowns.
 - Hide summary chips that have no configured or discovered backing source, avoid inferred security modes and analytics zeroes, preserve valid zero values (including `Alerts: 0`) for sources that do exist, and honor `dahua_base` on the compact chips card.
 - Make Home Assistant grid-input mappings resilient to entity renames by accepting stable entity-registry `unique_id` values, while preserving existing `entity_id` configurations and reporting stale selectors explicitly; hide the grid-power chip when no mapping is configured.
 - Publish a Transmitter's physical-input `M_11_3F` and `M_11_40` events as a generic `input_alarm` binary state, while cleaning up obsolete derived `grid_power` discovery entities during cache migration.

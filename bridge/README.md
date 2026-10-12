@@ -17,7 +17,11 @@ Use [docker-compose.yml](./docker-compose.yml) as the tracked baseline and keep 
 
 For another installation, run a separate bridge with `AJAXBRIDGE_SOURCE_ID=apartment`, a separate Jeedom MQTT Manager root, and its own data volume. The source ID separates MQTT/HA identities, scopes data files under an `apartment` directory, and adds a `source_id` Prometheus label without changing local Ajax zones or Jeedom command IDs. Leave an existing installation's source ID empty to preserve its current entity identities and file paths; see [multiple installations](./docs/multiple-installations.md) for configuration and migration details.
 
-## Upgrading to 2.1.0
+## Upgrading to 2.1.1
+
+Read the [2.1.1 release and upgrade notes](./docs/releases/2.1.1.md) for dependency fixes, Home Assistant MQTT recovery, isolated installations, and the optional Jeedom MySQL 8.4 runtime. Preserve existing source IDs, data mounts, command mappings, and history. Custom Jeedom runtime users must rebuild and recreate their images to apply the startup compatibility patch; restarting an old image does not update its code.
+
+## Earlier electrical unit migration
 
 Read the [release and upgrade notes](./docs/releases/2.1.0.md) for the complete changes since 2.0.1. Back up the bridge data directory, existing Jeedom command settings, and any Home Assistant statistics before changing electrical units.
 
@@ -49,7 +53,8 @@ AjaxBridge is an unofficial DIY open-source project for compatibility and integr
 ## Documentation
 
 - [Documentation index](./docs/index.md)
-- [2.1.0 release and upgrade notes](./docs/releases/2.1.0.md)
+- [2.1.1 release and upgrade notes](./docs/releases/2.1.1.md)
+- [2.1.0 electrical unit and history migration](./docs/releases/2.1.0.md)
 - [Overview](./docs/overview.md)
 - [SIA integration](./docs/sia.md)
 - [Jeedom integration](./docs/jeedom.md)

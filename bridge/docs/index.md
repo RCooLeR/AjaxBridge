@@ -7,6 +7,7 @@
 
 ## Releases and Upgrades
 
+- [2.1.1](./releases/2.1.1.md): dependency fixes, MQTT recovery, isolated installations, dashboard corrections, and Jeedom MySQL 8.4 upgrade steps.
 - [2.1.0](./releases/2.1.0.md): changes since 2.0.1, electrical unit and history migration, unknown states and controls, tooling, Jeedom patch packaging, upgrade checks, and rollback.
 - [Project changelog](../../CHANGELOG.md): release history for the bridge, cards, and bundled integrations.
 

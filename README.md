@@ -8,11 +8,11 @@ AjaxBridge connects Ajax security hubs to Home Assistant and Prometheus. It rece
 
 The repository includes the Go bridge, Home Assistant Lovelace cards, and an optional telemetry patch for the official Jeedom Ajax Systems plugin. The bridge keeps current state and an optional Jeedom cache; historical storage belongs to Prometheus or Home Assistant Recorder.
 
-## Version 2.1.0
+## Version 2.1.1
 
-This release adds complete Jeedom snapshot metrics, broader device diagnostics, stable command ownership, observed-state controls, and explicit electrical unit handling. Cached values are available to Prometheus immediately after startup. Missing readings stay unknown, and unit corrections preserve Home Assistant command identities without rewriting old statistics.
+This patch release updates Go and Vite security dependencies, restores MQTT discovery after Home Assistant restarts, fixes Jeedom compatibility with MySQL 8.4, and separates multiple bridge installations. It also improves configured dashboard chips, informational grid outages, and Hub communication details. Existing installations keep their identities when the source ID remains unchanged.
 
-Read the [2.1.0 release and upgrade notes](./bridge/docs/releases/2.1.0.md) before upgrading from 2.0.1, especially if you already record current, power, or energy history. The release includes a separate `AjaxBridge_2.1.0_jeedom_patch.zip`; extract it and follow the included `Jeedom/README.md` to update an existing plugin installation.
+Read the [2.1.1 release and upgrade notes](./bridge/docs/releases/2.1.1.md). The release includes `AjaxBridge_2.1.1_jeedom_patch.zip` for an existing official plugin installation; the custom external-database Jeedom runtime is built separately from the source archive. Upgrading from 2.0.1 or earlier also requires the [2.1.0 electrical unit and history guidance](./bridge/docs/releases/2.1.0.md).
 
 ## Disclaimer
 
@@ -21,7 +21,7 @@ AjaxBridge is an unofficial DIY open-source project for compatibility and integr
 ## Documentation
 
 - [Bridge documentation](./bridge/docs/index.md)
-- [2.1.0 release and upgrade notes](./bridge/docs/releases/2.1.0.md)
+- [2.1.1 release and upgrade notes](./bridge/docs/releases/2.1.1.md)
 - [Prometheus metrics and history](./bridge/docs/prometheus.md)
 - [Multiple installations: house and apartment](./bridge/docs/multiple-installations.md)
 - [Jeedom Docker with bind-mounted HTML and external MySQL 8.4](./deploy/jeedom-external/README.md)
