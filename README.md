@@ -10,7 +10,7 @@ The repository includes the Go bridge, Home Assistant Lovelace cards, and an opt
 
 ## Version 2.1.1
 
-This patch release updates Go and Vite security dependencies, restores MQTT discovery after Home Assistant restarts, fixes Jeedom compatibility with MySQL 8.4, and separates multiple bridge installations. It also improves configured dashboard chips, informational grid outages, and Hub communication details. Existing installations keep their identities when the source ID remains unchanged.
+This patch release includes Go security fixes and a Vite dependency update, restores MQTT discovery after Home Assistant restarts, fixes Jeedom compatibility with MySQL 8.4, and separates multiple bridge installations. It also improves configured dashboard chips, informational grid outages, and Hub communication details. Keep existing source IDs unchanged and review the documented migration from legacy grid-power entities to raw input alarms.
 
 Read the [2.1.1 release and upgrade notes](./bridge/docs/releases/2.1.1.md). The release includes `AjaxBridge_2.1.1_jeedom_patch.zip` for an existing official plugin installation; the custom external-database Jeedom runtime is built separately from the source archive. Upgrading from 2.0.1 or earlier also requires the [2.1.0 electrical unit and history guidance](./bridge/docs/releases/2.1.0.md).
 
