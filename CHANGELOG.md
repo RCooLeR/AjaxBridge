@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Update Chi to 5.4.0, Vite to 8.3.4, and the compatible frontend tooling patches; refresh the pinned Go builder image and GitHub Actions dependencies.
+
 ## 2.1.1 - 2026-10-12
 
 Upgrade and rollback guidance: [2.1.1 release notes](bridge/docs/releases/2.1.1.md).
