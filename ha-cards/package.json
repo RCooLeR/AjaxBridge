@@ -3,9 +3,9 @@
   "private": true,
   "version": "2.1.1",
   "type": "module",
-  "packageManager": "npm@12.2.0",
+  "packageManager": "npm@12.2.1",
   "engines": {
-    "node": ">=24.21.0 <25"
+    "node": ">=24.22.1 <25"
   },
   "scripts": {
     "dev": "vite",
@@ -19,18 +19,18 @@
     "verify": "npm run test && npm run lint && npm run build"
   },
   "dependencies": {
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
-    "oxlint": "^1.88.0",
-    "oxlint-tsgolint": "^7.0.2004",
-    "rolldown": "^1.2.13",
+    "oxlint": "^1.89.0",
+    "oxlint-tsgolint": "^7.0.2005",
+    "rolldown": "^1.2.15",
     "typescript": "~7.0.2",
-    "vite": "^8.3.4"
+    "vite": "^8.3.5"
   }
 }

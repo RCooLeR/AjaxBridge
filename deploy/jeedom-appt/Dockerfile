@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Current official 4.6-bookworm is DATABASE=0 and has MariaDB clients only.
 # Add the server for this self-contained instance; never use the house DB.
-FROM jeedom/jeedom:4.6-bookworm@sha256:2bd93edc6006a8d07f147cc1790c2553e1566e630464b35a11d6fe38171e2554
+FROM jeedom/jeedom:4.6-bookworm@sha256:a84fc9b54902a8264d5281da18e7ecd2b8a0a3c6d5957a0b674a2f44eec9d0e6
 
 USER root
 ENV DATABASE=1

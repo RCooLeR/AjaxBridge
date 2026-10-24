@@ -36,7 +36,7 @@ jobs:
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
-          version: v2.18.2
+          version: v2.19.0
           args: check
 
   jeedom:
@@ -141,8 +141,8 @@ jobs:
 
       - name: Use pinned npm
         run: |
-          npm install --global npm@12.2.0
-          test "$(npm --version)" = 12.2.0
+          npm install --global npm@12.2.1
+          test "$(npm --version)" = 12.2.1
 
       - name: Install dependencies
         run: npm --prefix ./ha-cards ci
@@ -266,4 +266,4 @@ jobs:
           severity: HIGH,CRITICAL
           scanners: vuln,secret
           pkg-types: os,library
-          version: v0.75.0
+          version: v0.76.1

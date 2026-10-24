@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- Update Chi to 5.4.0, Vite to 8.3.4, and the compatible frontend tooling patches; refresh the pinned Go builder image and GitHub Actions dependencies.
+- Update Go to 1.27.3, Chi to 5.5.0, and compatible Prometheus and Go networking/tooling dependencies. Refresh digest-pinned Go and Alpine 3.24.3 images for both amd64 and arm64 builds.
+- Update the card toolchain to Node.js 24.22.1 LTS and npm 12.2.1, React to 19.3.1, Vite to 8.3.5, and compatible linting and bundler dependencies.
+- Refresh the Jeedom 4.6 Bookworm image (bundled Jeedom 4.6.2 and PHP 8.2.35), preserving existing mounted HTML and external-database configuration. Update pinned release and scanning tools.
 
 ## 2.1.1 - 2026-10-12
 
