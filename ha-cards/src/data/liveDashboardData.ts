@@ -313,6 +313,7 @@ export function useDashboardData(
 
     const refresh = async () => {
       controller.abort();
+      // oxlint-disable-next-line react/immutability -- Each refresh replaces an effect-local request controller.
       controller = new AbortController();
 
       try {

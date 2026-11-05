@@ -221,6 +221,7 @@ function NativeCameraStream({ hass, stateObj, profile, muted, volume }: NativeCa
     });
 
     return () => {
+      // oxlint-disable-next-line react/immutability -- This cancellation flag is local to the effect, not render state.
       active = false;
     };
   }, [hass, profile, stateObj]);
