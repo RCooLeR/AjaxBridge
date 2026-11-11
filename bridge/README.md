@@ -17,9 +17,9 @@ Use [docker-compose.yml](./docker-compose.yml) as the tracked baseline and keep 
 
 For another installation, run a separate bridge with `AJAXBRIDGE_SOURCE_ID=apartment`, a separate Jeedom MQTT Manager root, and its own data volume. The source ID separates MQTT/HA identities, scopes data files under an `apartment` directory, and adds a `source_id` Prometheus label without changing local Ajax zones or Jeedom command IDs. Leave an existing installation's source ID empty to preserve its current entity identities and file paths; see [multiple installations](./docs/multiple-installations.md) for configuration and migration details.
 
-## Upgrading to 2.1.1
+## Upgrading to 2.1.2
 
-Read the [2.1.1 release and upgrade notes](./docs/releases/2.1.1.md) for dependency fixes, Home Assistant MQTT recovery, isolated installations, and the optional Jeedom MySQL 8.4 runtime. Preserve existing source IDs, data mounts, command mappings, and history. Custom Jeedom runtime users must rebuild and recreate their images to apply the startup compatibility patch; restarting an old image does not update its code.
+Read the [2.1.2 release and upgrade notes](./docs/releases/2.1.2.md) for the dependency, container, and card updates. No migration is required from 2.1.1. Preserve existing source IDs, data mounts, command mappings, and history. Rebuild and recreate source-built bridge and custom Jeedom images to apply their updated dependencies; restarting an old image does not update its code. Earlier installations must also follow the [2.1.1 migration guidance](./docs/releases/2.1.1.md).
 
 ## Earlier electrical unit migration
 
@@ -33,7 +33,7 @@ Home Assistant Recorder exclusions do not stop Prometheus scraping. Neither the 
 
 ## Build and verification
 
-The bridge uses Go 1.27.3. From `bridge/`:
+The bridge uses Go 1.27.4. From `bridge/`:
 
 ```sh
 go test ./...
@@ -42,7 +42,7 @@ go test -race ./...
 go tool govulncheck ./...
 ```
 
-The race detector requires a supported platform and C toolchain. Home Assistant cards use Node.js 24.22.1 and npm 12.2.1; see their [development guide](../ha-cards/README.md).
+The race detector requires a supported platform and C toolchain. Home Assistant cards use Node.js 24.22.2 and npm 12.2.2; see their [development guide](../ha-cards/README.md).
 
 CI is configured to run on pushed branches and pull requests. It checks the Go bridge with vet, normal and race-enabled tests, and the pinned `govulncheck`; checks the cards with regression tests, type-aware linting, TypeScript 7, and a Vite production build; and validates, smoke-tests, and scans the hardened amd64/arm64 container image. The release pipeline produces checksums, SBOMs, provenance and signed container images.
 
@@ -53,7 +53,7 @@ AjaxBridge is an unofficial DIY open-source project for compatibility and integr
 ## Documentation
 
 - [Documentation index](./docs/index.md)
-- [2.1.1 release and upgrade notes](./docs/releases/2.1.1.md)
+- [2.1.2 release and upgrade notes](./docs/releases/2.1.2.md)
 - [2.1.0 electrical unit and history migration](./docs/releases/2.1.0.md)
 - [Overview](./docs/overview.md)
 - [SIA integration](./docs/sia.md)

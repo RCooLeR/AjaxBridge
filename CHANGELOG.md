@@ -2,9 +2,17 @@
 
 ## Unreleased
 
-- Update Go to 1.27.3, Chi to 5.5.0, and compatible Prometheus and Go networking/tooling dependencies. Refresh digest-pinned Go and Alpine 3.24.3 images for both amd64 and arm64 builds.
-- Update the card toolchain to Node.js 24.22.1 LTS and npm 12.2.1, React to 19.3.1, Vite to 8.3.5, and compatible linting and bundler dependencies.
-- Refresh the Jeedom 4.6 Bookworm image (bundled Jeedom 4.6.2 and PHP 8.2.35), preserving existing mounted HTML and external-database configuration. Update pinned release and scanning tools.
+## 2.1.2 - 2026-11-11
+
+Upgrade and rollback guidance: [2.1.2 release notes](bridge/docs/releases/2.1.2.md).
+
+- Update Go to 1.27.4, including the `net/http` fix for GO-2026-6859 / CVE-2026-97054, Chi to 5.5.0, Prometheus common to 0.73.1, and procfs to 0.23.0. Update `golang.org/x/net` to 0.62.0, including the HTML advisory fixes, and refresh compatible Go tooling, compression, YAML, and ABNF dependencies.
+- Refresh the digest-pinned Go builder and Alpine 3.24.3 runtime images while retaining linux/amd64 and linux/arm64 builds.
+- Update the card toolchain to Node.js 24.22.2 LTS and npm 12.2.2, React and ReactDOM to 19.3.1, Vite to 8.3.6, its React plugin to 6.2.1, Rolldown to 1.3.0, and PostCSS to 8.5.32. Keep TypeScript 7.0.2 and refresh compatible lockfile dependencies.
+- Update Oxlint to 1.91.0, tsgolint to 7.0.2006, and Node types to 24.19.2. Pin frontend build tools to exact versions and document two effect-local mutation exceptions without changing camera or dashboard behavior.
+- Refresh both Jeedom 4.6 Bookworm image pins (bundled Jeedom 4.6.2 and PHP 8.2.35), preserving existing mounted HTML and external-database configuration. The optional plugin patch bundle remains 2026.10.09.1.
+- Update GoReleaser to 2.19.0, Syft to 1.55.0, Cosign to 3.1.4, Trivy to 0.76.1, and the pinned Node setup, Docker login, and GoReleaser actions.
+- Preserve device mappings, MQTT topics, Home Assistant identities, source isolation, and stored state formats; this release requires no migration from 2.1.1.
 
 ## 2.1.1 - 2026-10-12
 

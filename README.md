@@ -8,11 +8,11 @@ AjaxBridge connects Ajax security hubs to Home Assistant and Prometheus. It rece
 
 The repository includes the Go bridge, Home Assistant Lovelace cards, and an optional telemetry patch for the official Jeedom Ajax Systems plugin. The bridge keeps current state and an optional Jeedom cache; historical storage belongs to Prometheus or Home Assistant Recorder.
 
-## Version 2.1.1
+## Version 2.1.2
 
-This patch release includes Go security fixes and a Vite dependency update, restores MQTT discovery after Home Assistant restarts, fixes Jeedom compatibility with MySQL 8.4, and separates multiple bridge installations. It also improves configured dashboard chips, informational grid outages, and Hub communication details. Keep existing source IDs unchanged and review the documented migration from legacy grid-power entities to raw input alarms.
+This maintenance release updates Go and networking dependencies, the Home Assistant card toolchain, container bases, and release tooling. Device mappings, MQTT/HA identities, source isolation, and application behavior remain unchanged. No migration is required from 2.1.1.
 
-Read the [2.1.1 release and upgrade notes](./bridge/docs/releases/2.1.1.md). The release includes `AjaxBridge_2.1.1_jeedom_patch.zip` for an existing official plugin installation; the custom external-database Jeedom runtime is built separately from the source archive. Upgrading from 2.0.1 or earlier also requires the [2.1.0 electrical unit and history guidance](./bridge/docs/releases/2.1.0.md).
+Read the [2.1.2 release and upgrade notes](./bridge/docs/releases/2.1.2.md). The release includes `AjaxBridge_2.1.2_jeedom_patch.zip` with the unchanged optional plugin bundle; the custom external-database Jeedom runtime is built separately from the source archive. Upgrading from before 2.1.1 also requires the [2.1.1 migration guidance](./bridge/docs/releases/2.1.1.md), and upgrades from 2.0.1 or earlier require the [electrical unit and history guidance](./bridge/docs/releases/2.1.0.md).
 
 ## Disclaimer
 
@@ -21,7 +21,7 @@ AjaxBridge is an unofficial DIY open-source project for compatibility and integr
 ## Documentation
 
 - [Bridge documentation](./bridge/docs/index.md)
-- [2.1.1 release and upgrade notes](./bridge/docs/releases/2.1.1.md)
+- [2.1.2 release and upgrade notes](./bridge/docs/releases/2.1.2.md)
 - [Prometheus metrics and history](./bridge/docs/prometheus.md)
 - [Multiple installations: house and apartment](./bridge/docs/multiple-installations.md)
 - [Jeedom Docker with bind-mounted HTML and external MySQL 8.4](./deploy/jeedom-external/README.md)
