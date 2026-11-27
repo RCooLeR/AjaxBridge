@@ -3,7 +3,7 @@ module github.com/RCooLeR/AjaxBridge
 go 1.27.4
 
 require (
-	github.com/eclipse/paho.mqtt.golang v1.5.1
+	github.com/eclipse/paho.mqtt.golang v1.5.2
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/client_model v0.6.3
